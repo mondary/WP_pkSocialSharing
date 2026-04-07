@@ -2,7 +2,7 @@
 
 Plugin WordPress “maison” pour publier automatiquement sur LinkedIn à la publication d’un article (image mise en avant + extrait + lien).
 
-**Build actuel :** `extension/pk-linkedin-autopublish-v0.02.zip`
+**Build actuel :** `extension/pk-linkedin-autopublish-v0.16.zip`
 
 ## 📁 Structure du dépôt
 
@@ -11,13 +11,13 @@ Plugin WordPress “maison” pour publier automatiquement sur LinkedIn à la pu
 ├── src/
 │   └── pk-linkedin-autopublish/        # Code du plugin
 └── extension/
-    └── pk-linkedin-autopublish-v0.02.zip
+    └── pk-linkedin-autopublish-v0.16.zip
 ```
 
 ## 🚀 Installation (sur ton WordPress)
 
 1. WP Admin → **Extensions** → **Ajouter** → **Téléverser une extension**
-2. Choisir `extension/pk-linkedin-autopublish-v0.02.zip`
+2. Choisir `extension/pk-linkedin-autopublish-v0.16.zip`
 3. Activer le plugin
 4. WP Admin → **Réglages → LinkedIn Auto Publish**
 

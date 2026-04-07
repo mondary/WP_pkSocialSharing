@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.02
+ * Version: 0.17
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -14,19 +14,183 @@ if (!defined('ABSPATH')) {
 
 final class PKLIAP_Plugin {
 	const OPT_KEY = 'pkliap_options';
+	const OPT_TOKEN = 'pkliap_access_token';
+	const OPT_TOKEN_EXP = 'pkliap_access_token_expires_at';
+	const OPT_REFRESH = 'pkliap_refresh_token';
+	const OPT_REFRESH_EXP = 'pkliap_refresh_token_expires_at';
 	const META_SHARED_AT = '_pkliap_shared_at';
 	const META_SHARE_URN = '_pkliap_linkedin_urn';
+	const SYNC_NAMESPACE = 'pksocialsharing/v1';
+	const SYNC_SLUG = 'pk-linkedin-autopublish';
 
 	public static function init(): void {
 		add_action('admin_menu', [__CLASS__, 'admin_menu']);
 		add_action('admin_init', [__CLASS__, 'register_settings']);
+		add_action('rest_api_init', [__CLASS__, 'register_rest_routes']);
 
 		add_action('admin_post_pkliap_connect', [__CLASS__, 'handle_connect']);
 		add_action('admin_post_pkliap_oauth_callback', [__CLASS__, 'handle_oauth_callback']);
 		add_action('admin_post_pkliap_disconnect', [__CLASS__, 'handle_disconnect']);
 		add_action('admin_post_pkliap_test_post', [__CLASS__, 'handle_test_post']);
+		add_action('admin_post_pkliap_detect_author', [__CLASS__, 'handle_detect_author']);
 
 		add_action('transition_post_status', [__CLASS__, 'on_transition_post_status'], 10, 3);
+	}
+
+	public static function register_rest_routes(): void {
+		register_rest_route(self::SYNC_NAMESPACE, '/sync-plugin/manifest', [
+			'methods' => 'GET',
+			'permission_callback' => static fn() => current_user_can('manage_options'),
+			'callback' => [__CLASS__, 'rest_manifest'],
+		]);
+
+		register_rest_route(self::SYNC_NAMESPACE, '/sync-plugin', [
+			'methods' => 'POST',
+			'permission_callback' => static fn() => current_user_can('manage_options'),
+			'callback' => [__CLASS__, 'rest_sync'],
+		]);
+	}
+
+	public static function rest_manifest(WP_REST_Request $request): WP_REST_Response {
+		$base_dir = plugin_dir_path(__FILE__);
+		$files = self::sync_collect_files($base_dir);
+
+		return new WP_REST_Response([
+			'slug' => self::SYNC_SLUG,
+			'version' => self::get_plugin_version(),
+			'base' => basename($base_dir),
+			'files' => array_values($files),
+		], 200);
+	}
+
+	public static function rest_sync(WP_REST_Request $request): WP_REST_Response {
+		$params = $request->get_json_params();
+		if (!is_array($params)) {
+			return new WP_REST_Response(['error' => 'JSON invalide'], 400);
+		}
+
+		$dry_run = !empty($params['dry_run']);
+		$files = isset($params['files']) && is_array($params['files']) ? $params['files'] : [];
+		$delete_paths = isset($params['delete_paths']) && is_array($params['delete_paths']) ? $params['delete_paths'] : [];
+
+		$base_dir = plugin_dir_path(__FILE__);
+		$written = [];
+		$deleted = [];
+		$errors = [];
+
+		foreach ($files as $item) {
+			$rel = is_array($item) ? (string)($item['path'] ?? '') : '';
+			$content_b64 = is_array($item) ? (string)($item['content_b64'] ?? '') : '';
+			if (!$rel || !$content_b64) {
+				$errors[] = ['type' => 'file', 'message' => 'Entrée fichier invalide'];
+				continue;
+			}
+			$rel = ltrim($rel, '/');
+			if (!self::sync_is_safe_rel_path($rel)) {
+				$errors[] = ['type' => 'file', 'path' => $rel, 'message' => 'Chemin interdit'];
+				continue;
+			}
+
+			if (!$dry_run) {
+				$abs = $base_dir . $rel;
+				$dir = dirname($abs);
+				if (!is_dir($dir) && !wp_mkdir_p($dir)) {
+					$errors[] = ['type' => 'file', 'path' => $rel, 'message' => 'Impossible de créer le dossier'];
+					continue;
+				}
+				$decoded = base64_decode($content_b64, true);
+				if ($decoded === false) {
+					$errors[] = ['type' => 'file', 'path' => $rel, 'message' => 'base64 invalide'];
+					continue;
+				}
+				if (file_put_contents($abs, $decoded) === false) {
+					$errors[] = ['type' => 'file', 'path' => $rel, 'message' => 'Écriture échouée'];
+					continue;
+				}
+			}
+
+			$written[] = $rel;
+		}
+
+		foreach ($delete_paths as $rel) {
+			$rel = is_string($rel) ? ltrim($rel, '/') : '';
+			if (!$rel) {
+				continue;
+			}
+			if (!self::sync_is_safe_rel_path($rel)) {
+				$errors[] = ['type' => 'delete', 'path' => $rel, 'message' => 'Chemin interdit'];
+				continue;
+			}
+			if (!$dry_run) {
+				$abs = $base_dir . $rel;
+				if (file_exists($abs) && is_file($abs) && !unlink($abs)) {
+					$errors[] = ['type' => 'delete', 'path' => $rel, 'message' => 'Suppression échouée'];
+					continue;
+				}
+			}
+			$deleted[] = $rel;
+		}
+
+		$status = $errors ? 207 : 200;
+		return new WP_REST_Response([
+			'slug' => self::SYNC_SLUG,
+			'dry_run' => $dry_run,
+			'written' => $written,
+			'deleted' => $deleted,
+			'errors' => $errors,
+		], $status);
+	}
+
+	private static function sync_is_safe_rel_path(string $rel): bool {
+		if ($rel === '' || str_contains($rel, "\0")) {
+			return false;
+		}
+		// Prevent traversal.
+		if (str_contains($rel, '..') || str_starts_with($rel, '.')) {
+			return false;
+		}
+		// Only allow a safe set of characters.
+		return (bool)preg_match('#^[A-Za-z0-9/_\.-]+$#', $rel);
+	}
+
+	private static function sync_collect_files(string $base_dir): array {
+		$base_dir = trailingslashit($base_dir);
+		$rii = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base_dir, FilesystemIterator::SKIP_DOTS));
+		$files = [];
+		foreach ($rii as $file) {
+			/** @var SplFileInfo $file */
+			if (!$file->isFile()) {
+				continue;
+			}
+			$abs = $file->getPathname();
+			$rel = str_replace($base_dir, '', $abs);
+			$rel = str_replace('\\', '/', $rel);
+
+			// Skip runtime/generated.
+			if (str_contains($rel, '/.DS_Store') || str_contains($rel, '/.git') || str_contains($rel, '/node_modules/')) {
+				continue;
+			}
+			if (!self::sync_is_safe_rel_path($rel)) {
+				continue;
+			}
+			$content = file_get_contents($abs);
+			if ($content === false) {
+				continue;
+			}
+			$files[$rel] = [
+				'path' => $rel,
+				'size' => strlen($content),
+				'sha1' => sha1($content),
+			];
+		}
+		ksort($files);
+		return $files;
+	}
+
+	private static function get_plugin_version(): string {
+		$data = get_file_data(__FILE__, ['Version' => 'Version'], 'plugin');
+		$ver = is_array($data) ? (string)($data['Version'] ?? '') : '';
+		return $ver ?: '0.00';
 	}
 
 	public static function defaults(): array {
@@ -36,6 +200,7 @@ final class PKLIAP_Plugin {
 			'client_secret' => '',
 			'redirect_uri' => '',
 			'author_urn' => '',
+			// Tokens are stored in separate options to avoid any sanitize/filters wiping array fields.
 			'access_token' => '',
 			'access_token_expires_at' => 0,
 			'refresh_token' => '',
@@ -52,6 +217,13 @@ final class PKLIAP_Plugin {
 			'utm_source' => 'linkedin',
 			'utm_medium' => 'social',
 			'utm_campaign' => 'autopublish',
+			'last_author_detect_error' => '',
+			'log_enabled' => 1,
+			'last_share_error' => '',
+			'last_share_error_at' => 0,
+			'last_oauth_at' => 0,
+			'last_oauth_token_len' => 0,
+			'last_oauth_error' => '',
 		];
 	}
 
@@ -60,11 +232,34 @@ final class PKLIAP_Plugin {
 		if (!is_array($stored)) {
 			$stored = [];
 		}
-		return array_merge(self::defaults(), $stored);
+		$opt = array_merge(self::defaults(), $stored);
+
+		// Inject tokens from dedicated options.
+		$opt['access_token'] = (string)get_option(self::OPT_TOKEN, '');
+		$opt['access_token_expires_at'] = (int)get_option(self::OPT_TOKEN_EXP, 0);
+		$opt['refresh_token'] = (string)get_option(self::OPT_REFRESH, '');
+		$opt['refresh_token_expires_at'] = (int)get_option(self::OPT_REFRESH_EXP, 0);
+
+		return $opt;
 	}
 
 	public static function update_options(array $new): void {
 		update_option(self::OPT_KEY, array_merge(self::get_options(), $new));
+	}
+
+	private static function set_tokens(array $data): void {
+		if (array_key_exists('access_token', $data)) {
+			update_option(self::OPT_TOKEN, (string)$data['access_token'], false);
+		}
+		if (array_key_exists('access_token_expires_at', $data)) {
+			update_option(self::OPT_TOKEN_EXP, (int)$data['access_token_expires_at'], false);
+		}
+		if (array_key_exists('refresh_token', $data)) {
+			update_option(self::OPT_REFRESH, (string)$data['refresh_token'], false);
+		}
+		if (array_key_exists('refresh_token_expires_at', $data)) {
+			update_option(self::OPT_REFRESH_EXP, (int)$data['refresh_token_expires_at'], false);
+		}
 	}
 
 	public static function admin_menu(): void {
@@ -114,12 +309,20 @@ final class PKLIAP_Plugin {
 		$out['utm_source'] = sanitize_text_field((string)($value['utm_source'] ?? $defaults['utm_source']));
 		$out['utm_medium'] = sanitize_text_field((string)($value['utm_medium'] ?? $defaults['utm_medium']));
 		$out['utm_campaign'] = sanitize_text_field((string)($value['utm_campaign'] ?? $defaults['utm_campaign']));
+		$out['log_enabled'] = empty($value['log_enabled']) ? 0 : 1;
 
 		$post_types = array_filter(array_map('sanitize_key', (array)($value['post_type_whitelist'] ?? $defaults['post_type_whitelist'])));
 		$out['post_type_whitelist'] = $post_types ? array_values(array_unique($post_types)) : $defaults['post_type_whitelist'];
 
-		// Ne pas écraser les tokens lors d'un enregistrement de la page.
-		foreach (['access_token', 'access_token_expires_at', 'refresh_token', 'refresh_token_expires_at'] as $k) {
+		// Ne pas stocker les tokens dans l'option tableau.
+		foreach ([
+			'last_author_detect_error',
+			'last_share_error',
+			'last_share_error_at',
+			'last_oauth_at',
+			'last_oauth_token_len',
+			'last_oauth_error',
+		] as $k) {
 			$out[$k] = self::get_options()[$k];
 		}
 
@@ -136,19 +339,81 @@ final class PKLIAP_Plugin {
 		}
 
 		$opt = self::get_options();
-		$has_token = !empty($opt['access_token']) && (!empty($opt['access_token_expires_at']) ? (time() < (int)$opt['access_token_expires_at']) : true);
+		$access_token_present = !empty($opt['access_token']);
+		$expires_at = (int)($opt['access_token_expires_at'] ?? 0);
+		$token_not_expired = ($expires_at <= 0) ? true : (time() < $expires_at);
+		$has_token = $access_token_present && $token_not_expired;
 
 		$post_types = get_post_types(['public' => true], 'objects');
 
 		$link_apps = 'https://www.linkedin.com/developers/apps';
 		$link_docs_oauth = 'https://learn.microsoft.com/linkedin/shared/authentication/authorization-code-flow';
+		$link_docs_oidc = 'https://learn.microsoft.com/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2';
 		$link_docs_ugc = 'https://learn.microsoft.com/linkedin/marketing/community-management/shares/ugc-post-api';
 		$link_docs_assets = 'https://learn.microsoft.com/linkedin/marketing/integrations/community-management/shares/vector-asset-api';
 
+		$recommended_redirect_uri = self::admin_url_action('pkliap_oauth_callback');
+		$config_redirect_uri = $opt['redirect_uri'] ?: $recommended_redirect_uri;
+		$has_client_id = !empty($opt['client_id']);
+		$has_client_secret = !empty($opt['client_secret']);
+		$redirect_is_recommended = ($config_redirect_uri === $recommended_redirect_uri);
+		$has_author_urn = !empty($opt['author_urn']);
+
 		?>
 		<div class="wrap">
-			<h1>WP PK SocialSharing</h1>
+			<h1>WP PK SocialSharing <span style="font-size:12px;opacity:.7;font-weight:600;">v<?php echo esc_html(self::get_plugin_version()); ?></span></h1>
 			<p>Publication automatique sur LinkedIn lors de la mise en ligne d’un article (image mise en avant + extrait + lien).</p>
+
+			<style>
+				.pks-modern{
+					--pks-card:#fff;
+					--pks-text:#0f172a;
+					--pks-muted:#64748b;
+					--pks-border:#e5e7eb;
+					--pks-bg:#f8fafc;
+					--pks-radius:10px;
+					color:var(--pks-text);
+				}
+				.pks-grid{display:grid;grid-template-columns:1fr;gap:16px;max-width:none}
+				@media (min-width: 980px){ .pks-grid{grid-template-columns:1fr 1fr} }
+				.pks-card{
+					background:var(--pks-card);
+					border:1px solid var(--pks-border);
+					border-radius:var(--pks-radius);
+					padding:16px;
+					box-shadow:0 1px 2px rgba(0,0,0,.03);
+				}
+				.pks-card--wide{grid-column:1 / -1}
+				.pks-card-title{
+					font-size:13px;font-weight:700;margin:0 0 14px;padding:0 0 10px;
+					border-bottom:1px solid var(--pks-border);display:flex;justify-content:space-between;align-items:center;
+				}
+				.pks-info{font-size:13px;line-height:1.55;color:var(--pks-muted)}
+				.pks-card code{background:#f3f4f6;padding:1px 6px;border-radius:6px;font-size:12px}
+				.pks-card .form-table{width:100%;margin:0;table-layout:fixed}
+				.pks-card .form-table th{width:clamp(160px,34%,240px)}
+				.pks-card .form-table td{min-width:0}
+				.pks-card input.regular-text,
+				.pks-card textarea,
+				.pks-card input[type="text"],
+				.pks-card input[type="url"],
+				.pks-card input[type="password"]{width:100%;max-width:100%;box-sizing:border-box}
+				.pks-card--accent-blue{border-top:4px solid #3b82f6}
+				.pks-card--accent-purple{border-top:4px solid #a855f7}
+				.pks-card--accent-ok{border-top:4px solid #10b981}
+				.pks-card--accent-warn{border-top:4px solid #f59e0b}
+				.pks-card--accent-bad{border-top:4px solid #ef4444}
+				.pks-actions-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+				.pks-actions-row form{margin:0}
+				.pks-pill{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;background:rgba(0,0,0,.06);font-size:12px}
+				.pks-pill--ok{background:rgba(16,185,129,.14)}
+				.pks-pill--warn{background:rgba(245,158,11,.16)}
+				.pks-pill--bad{background:rgba(239,68,68,.14)}
+				.pks-checklist{display:flex;flex-direction:column;gap:10px;margin:0}
+				.pks-checkrow{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--pks-border);border-radius:var(--pks-radius);background:var(--pks-bg)}
+				.pks-checkrow strong{display:block;font-size:13px}
+				.pks-checkrow p{margin:2px 0 0;font-size:12px;color:var(--pks-muted)}
+			</style>
 
 			<?php if (!empty($_GET['pkliap_notice'])): ?>
 				<div class="notice notice-info"><p><?php echo esc_html((string)wp_unslash($_GET['pkliap_notice'])); ?></p></div>
@@ -157,155 +422,296 @@ final class PKLIAP_Plugin {
 				<div class="notice notice-error"><p><?php echo esc_html((string)wp_unslash($_GET['pkliap_error'])); ?></p></div>
 			<?php endif; ?>
 
-			<form method="post" action="options.php">
-				<?php settings_fields('pkliap'); ?>
-				<table class="form-table" role="presentation">
-					<tr>
-						<th scope="row">Activer</th>
-						<td>
-							<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[enabled]" value="1" <?php checked(1, (int)$opt['enabled']); ?>/> Publier automatiquement</label>
-							<p class="description">Quand activé, le plugin tente de poster sur LinkedIn au moment où un contenu passe en statut <code>publish</code>.</p>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">Client ID</th>
-						<td>
-							<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[client_id]" value="<?php echo esc_attr($opt['client_id']); ?>"/>
-							<p class="description">
-								Où le trouver : dans votre app LinkedIn (tableau de bord) → “Auth” / “OAuth settings”.
-								Créez/ouvrez votre app ici : <a href="<?php echo esc_url($link_apps); ?>" target="_blank" rel="noopener">LinkedIn Developers – My Apps</a>.
-							</p>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">Client Secret</th>
-						<td>
-							<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[client_secret]" value="<?php echo esc_attr($opt['client_secret']); ?>"/>
-							<p class="description">
-								Où le trouver : même endroit que le Client ID, sur la page de votre app LinkedIn.
-								Si vous ne le voyez pas, LinkedIn propose souvent un bouton “Generate/Regenerate secret”.
-							</p>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">Redirect URI</th>
-						<td>
-							<input class="regular-text" type="url" name="<?php echo esc_attr(self::OPT_KEY); ?>[redirect_uri]" value="<?php echo esc_attr($opt['redirect_uri']); ?>"/>
-							<p class="description">
-								Étape obligatoire : copiez-collez cette URL dans votre app LinkedIn → “OAuth 2.0 settings” → “Authorized redirect URLs”.
-								Recommandé : <code><?php echo esc_html(self::admin_url_action('pkliap_oauth_callback')); ?></code>
-							</p>
-							<p class="description">
-								Aide : <a href="<?php echo esc_url($link_docs_oauth); ?>" target="_blank" rel="noopener">Doc LinkedIn OAuth (Authorization Code Flow)</a>.
-							</p>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">Author URN</th>
-						<td>
-							<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[author_urn]" value="<?php echo esc_attr($opt['author_urn']); ?>"/>
-							<p class="description">
-								C’est “qui poste” : votre profil (<code>urn:li:person:…</code>) ou une Page (<code>urn:li:organization:…</code>).
-								Si vous publiez en tant que Page, l’app doit avoir les permissions LinkedIn pour les organisations.
-							</p>
-							<p class="description">
-								Astuces pour le récupérer :
-								- Profil : via les outils/API LinkedIn (endpoint <code>me</code>) ou via votre outil d’intégration existant.
-								- Page : depuis l’admin de la Page + API organisations (dépend des permissions).
-								Doc : <a href="<?php echo esc_url($link_docs_ugc); ?>" target="_blank" rel="noopener">UGC Post API</a>.
-							</p>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">LinkedIn-Version</th>
-						<td>
-							<input class="small-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[linkedin_version]" value="<?php echo esc_attr($opt['linkedin_version']); ?>"/>
-							<p class="description">
-								Format <code>YYYYMM</code> (ex: <code>202603</code>). Utilisé pour l’API Assets (<code>/rest</code>) lors de l’upload d’images.
-								Doc : <a href="<?php echo esc_url($link_docs_assets); ?>" target="_blank" rel="noopener">Asset / registerUpload</a>.
-							</p>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">Visibilité</th>
-						<td>
-							<select name="<?php echo esc_attr(self::OPT_KEY); ?>[visibility]">
-								<option value="PUBLIC" <?php selected('PUBLIC', $opt['visibility']); ?>>Public</option>
-								<option value="LOGGED_IN" <?php selected('LOGGED_IN', $opt['visibility']); ?>>Connectés</option>
-								<option value="CONNECTIONS" <?php selected('CONNECTIONS', $opt['visibility']); ?>>Relations</option>
-							</select>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">Types de contenu</th>
-						<td>
-							<p class="description">Cochez uniquement les types à partager (recommandé : <code>post</code>).</p>
-							<?php foreach ($post_types as $pt): ?>
-								<label style="display:block;margin:2px 0;">
-									<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[post_type_whitelist][]" value="<?php echo esc_attr($pt->name); ?>" <?php checked(in_array($pt->name, $opt['post_type_whitelist'], true)); ?>/>
-									<?php echo esc_html($pt->labels->singular_name . ' (' . $pt->name . ')'); ?>
-								</label>
-							<?php endforeach; ?>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">Lien</th>
-						<td>
-							<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[use_wp_shortlink]" value="1" <?php checked(1, (int)$opt['use_wp_shortlink']); ?>/> Utiliser le shortlink WordPress (si dispo)</label><br/>
-							<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[append_utm]" value="1" <?php checked(1, (int)$opt['append_utm']); ?>/> Ajouter des paramètres UTM</label>
-							<p class="description">
-								UTM: source <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_source]" value="<?php echo esc_attr($opt['utm_source']); ?>"/> medium <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_medium]" value="<?php echo esc_attr($opt['utm_medium']); ?>"/> campaign <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_campaign]" value="<?php echo esc_attr($opt['utm_campaign']); ?>"/>
-							</p>
-							<p class="description">Si votre site a déjà un “lien court” (shortlink), cochez l’option pour l’utiliser automatiquement.</p>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">Texte</th>
-						<td>
-							<p class="description">Le contenu final est tronqué côté plugin pour rester raisonnable, LinkedIn peut aussi appliquer ses propres limites.</p>
-							<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label><br/>
-							<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">Anti-doublon</th>
-						<td>
-							<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[only_once]" value="1" <?php checked(1, (int)$opt['only_once']); ?>/> Publier une seule fois par article</label><br/>
-							<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[share_on_update]" value="1" <?php checked(1, (int)$opt['share_on_update']); ?>/> Republier lors d’une mise à jour (si déjà partagé)</label>
-						</td>
-					</tr>
-				</table>
-				<?php submit_button(); ?>
-			</form>
+			<div class="pks-modern">
+				<div class="pks-grid">
+					<div class="pks-card pks-card--accent-warn pks-card--wide">
+						<div class="pks-card-title">Connexion (pas-à-pas)</div>
+						<div class="pks-checklist">
+							<div class="pks-checkrow">
+								<?php echo $has_client_id ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<div>
+									<strong>1) Client ID</strong>
+									<p>À copier depuis <a href="<?php echo esc_url($link_apps); ?>" target="_blank" rel="noopener">LinkedIn Developers</a> → ton app → Auth.</p>
+								</div>
+							</div>
+							<div class="pks-checkrow">
+								<?php echo $has_client_secret ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<div>
+									<strong>2) Client Secret</strong>
+									<p>Même écran que le Client ID (Generate/Regenerate si besoin).</p>
+								</div>
+							</div>
+							<div class="pks-checkrow">
+								<?php echo $redirect_is_recommended ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--warn">WARN</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<div>
+									<strong>3) Redirect URI (doit matcher LinkedIn)</strong>
+									<p>Dans LinkedIn → Auth → “Authorized redirect URLs” : <code><?php echo esc_html($recommended_redirect_uri); ?></code></p>
+									<?php if (!$redirect_is_recommended): ?>
+										<p>Actuel côté plugin : <code><?php echo esc_html($config_redirect_uri); ?></code></p>
+									<?php endif; ?>
+								</div>
+							</div>
+							<div class="pks-checkrow">
+								<?php echo $has_token ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<div>
+									<strong>4) OAuth (connexion)</strong>
+									<p>Clique “Connecter / Reconnecter”, accepte sur LinkedIn, puis reviens ici. Si tu vois “State OAuth invalide” ou “Bummer”, c’est presque toujours un souci de produit/scopes ou de redirect URI.</p>
+									<?php if (!empty($opt['last_oauth_error'])): ?>
+										<p style="color:#b32d2e;">Dernière erreur OAuth : <?php echo esc_html($opt['last_oauth_error']); ?></p>
+									<?php endif; ?>
+								</div>
+							</div>
+							<div class="pks-checkrow">
+								<?php echo $has_author_urn ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--warn">À FAIRE</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<div>
+									<strong>5) Author URN (qui poste)</strong>
+									<p>Profil : auto-détection après connexion. Page : à renseigner en <code>urn:li:organization:…</code> (nécessite permissions organisations).</p>
+								</div>
+							</div>
+							<div class="pks-checkrow">
+								<span class="pks-pill pks-pill--warn">MANUEL</span>
+								<div>
+									<strong>Pré-requis LinkedIn (à vérifier côté Developers)</strong>
+									<p>Products : activer “Share on LinkedIn” (post) et idéalement “Sign In with LinkedIn using OpenID Connect” (pour identifier le membre via <code>/userinfo</code>). Voir : <a href="<?php echo esc_url($link_docs_oidc); ?>" target="_blank" rel="noopener">doc OIDC</a>.</p>
+								</div>
+							</div>
+						</div>
+					</div>
 
-			<hr/>
-			<h2>Connexion LinkedIn</h2>
-			<p>Statut : <?php echo $has_token ? '<strong>Connecté</strong>' : '<strong>Non connecté</strong>'; ?></p>
-			<p>
-				<a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_connect'), 'pkliap_connect')); ?>">Connecter / Reconnecter</a>
-				<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_disconnect'), 'pkliap_disconnect')); ?>">Déconnecter</a>
-			</p>
+					<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
+						<div class="pks-card-title">LinkedIn Developer (App)</div>
+						<?php settings_fields('pkliap'); ?>
+						<table class="form-table" role="presentation">
+							<tr>
+								<th scope="row">Client ID</th>
+								<td>
+									<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[client_id]" value="<?php echo esc_attr($opt['client_id']); ?>"/>
+									<p class="description">
+										Dans votre app LinkedIn → “Auth”. Lien direct : <a href="<?php echo esc_url($link_apps); ?>" target="_blank" rel="noopener">LinkedIn Developers – My Apps</a>.
+									</p>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Client Secret</th>
+								<td>
+									<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[client_secret]" value="<?php echo esc_attr($opt['client_secret']); ?>"/>
+									<p class="description">Dans votre app LinkedIn → “Auth” (Generate/Regenerate si besoin).</p>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Redirect URI</th>
+								<td>
+									<input class="regular-text" type="url" name="<?php echo esc_attr(self::OPT_KEY); ?>[redirect_uri]" value="<?php echo esc_attr($opt['redirect_uri']); ?>"/>
+									<p class="description">
+										À coller dans LinkedIn → “Authorized redirect URLs”.
+										Recommandé : <code><?php echo esc_html($recommended_redirect_uri); ?></code>
+									</p>
+									<p class="description">
+										Doc : <a href="<?php echo esc_url($link_docs_oauth); ?>" target="_blank" rel="noopener">OAuth Authorization Code Flow</a>.
+									</p>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">LinkedIn-Version</th>
+								<td>
+									<input class="regular-text" style="max-width:140px;" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[linkedin_version]" value="<?php echo esc_attr($opt['linkedin_version']); ?>"/>
+									<p class="description">Format <code>YYYYMM</code> (API Assets pour l’upload image).</p>
+								</td>
+							</tr>
+						</table>
+						<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+					</form>
 
-			<h2>Test</h2>
-			<form method="post" action="<?php echo esc_url(self::admin_url_action('pkliap_test_post')); ?>">
-				<?php wp_nonce_field('pkliap_test_post'); ?>
-				<p class="description">Choisissez un article publié pour tenter un partage LinkedIn.</p>
-				<select name="post_id">
-					<?php
-					$posts = get_posts([
-						'post_type' => $opt['post_type_whitelist'],
-						'post_status' => 'publish',
-						'numberposts' => 20,
-						'orderby' => 'date',
-						'order' => 'DESC',
-					]);
-					foreach ($posts as $p) {
-						echo '<option value="' . esc_attr((string)$p->ID) . '">' . esc_html($p->post_title . ' (#' . $p->ID . ')') . '</option>';
-					}
-					?>
-				</select>
-				<?php submit_button('Publier maintenant', 'secondary', 'submit', false); ?>
-			</form>
+					<div class="pks-card pks-card--accent-purple">
+						<div class="pks-card-title">Compte LinkedIn (qui poste)</div>
+						<div class="pks-actions-row" style="margin:-6px 0 12px;">
+							<?php echo $has_token ? '<span class="pks-pill pks-pill--ok">Connecté</span>' : '<span class="pks-pill pks-pill--bad">Non connecté</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							<?php echo $access_token_present ? '<span class="pks-pill pks-pill--ok">Token présent</span>' : '<span class="pks-pill pks-pill--bad">Token absent</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							<?php if ($access_token_present): ?>
+								<?php echo $token_not_expired ? '<span class="pks-pill pks-pill--ok">Token OK</span>' : '<span class="pks-pill pks-pill--bad">Token expiré</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							<?php endif; ?>
+						</div>
+						<div class="pks-actions-row" style="margin:0 0 12px;">
+							<a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_connect'), 'pkliap_connect')); ?>">Connecter / Reconnecter</a>
+							<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_disconnect'), 'pkliap_disconnect')); ?>">Déconnecter</a>
+							<?php if ($has_token && empty($opt['author_urn'])): ?>
+								<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_detect_author'), 'pkliap_detect_author')); ?>">Détecter mon profil</a>
+							<?php endif; ?>
+						</div>
+						<?php if ($access_token_present && $expires_at > 0): ?>
+							<p class="pks-info" style="margin:-4px 0 12px;">Expiration token : <?php echo esc_html(wp_date('Y-m-d H:i', $expires_at)); ?></p>
+						<?php endif; ?>
+						<?php if (!empty($opt['last_oauth_at'])): ?>
+							<p class="pks-info" style="margin:-6px 0 12px;">
+								Dernière connexion OAuth : <?php echo esc_html(wp_date('Y-m-d H:i', (int)$opt['last_oauth_at'])); ?>
+								<?php if (!empty($opt['last_oauth_token_len'])): ?>
+									( longueur token : <?php echo (int)$opt['last_oauth_token_len']; ?> )
+								<?php endif; ?>
+							</p>
+						<?php endif; ?>
+						<table class="form-table" role="presentation">
+							<tr>
+								<th scope="row">Author URN</th>
+								<td>
+									<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[author_urn]" form="pkliap_save_form_proxy" value="<?php echo esc_attr($opt['author_urn']); ?>"/>
+									<p class="description">Profil : <code>urn:li:person:…</code> (auto-détection). Page : <code>urn:li:organization:…</code> (manuel).</p>
+									<?php if (!empty($opt['last_author_detect_error'])): ?>
+										<p class="description" style="color:#b32d2e;">Dernière erreur détection URN : <?php echo esc_html($opt['last_author_detect_error']); ?></p>
+									<?php endif; ?>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Visibilité</th>
+								<td>
+									<select name="<?php echo esc_attr(self::OPT_KEY); ?>[visibility]" form="pkliap_save_form_proxy">
+										<option value="PUBLIC" <?php selected('PUBLIC', $opt['visibility']); ?>>Public</option>
+										<option value="LOGGED_IN" <?php selected('LOGGED_IN', $opt['visibility']); ?>>Connectés</option>
+										<option value="CONNECTIONS" <?php selected('CONNECTIONS', $opt['visibility']); ?>>Relations</option>
+									</select>
+								</td>
+							</tr>
+						</table>
+						<p class="pks-info" style="margin:0;">
+							Pré-requis : activer “Share on LinkedIn” (et idéalement OIDC) dans l’app LinkedIn.
+							Doc : <a href="<?php echo esc_url($link_docs_oidc); ?>" target="_blank" rel="noopener">OIDC userinfo</a>.
+						</p>
+					</div>
+
+					<form method="post" action="options.php" class="pks-card pks-card--accent-ok pks-card--wide" id="pkliap_save_form_proxy">
+						<div class="pks-card-title">Publication</div>
+						<?php settings_fields('pkliap'); ?>
+						<table class="form-table" role="presentation">
+							<tr>
+								<th scope="row">Activer</th>
+								<td>
+									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[enabled]" value="1" <?php checked(1, (int)$opt['enabled']); ?>/> Publier automatiquement</label>
+									<p class="description">Déclenchement lors du passage en statut <code>publish</code>.</p>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Types de contenu</th>
+								<td>
+									<?php foreach ($post_types as $pt): ?>
+										<label style="display:block;margin:2px 0;">
+											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[post_type_whitelist][]" value="<?php echo esc_attr($pt->name); ?>" <?php checked(in_array($pt->name, $opt['post_type_whitelist'], true)); ?>/>
+											<?php echo esc_html($pt->labels->singular_name . ' (' . $pt->name . ')'); ?>
+										</label>
+									<?php endforeach; ?>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Lien</th>
+								<td>
+									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[use_wp_shortlink]" value="1" <?php checked(1, (int)$opt['use_wp_shortlink']); ?>/> Utiliser le shortlink WP</label><br/>
+									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[append_utm]" value="1" <?php checked(1, (int)$opt['append_utm']); ?>/> Ajouter des UTM</label>
+									<p class="description">UTM: source <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_source]" value="<?php echo esc_attr($opt['utm_source']); ?>"/> medium <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_medium]" value="<?php echo esc_attr($opt['utm_medium']); ?>"/> campaign <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_campaign]" value="<?php echo esc_attr($opt['utm_campaign']); ?>"/></p>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Texte</th>
+								<td>
+									<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label><br/>
+									<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Anti-doublon</th>
+								<td>
+									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[only_once]" value="1" <?php checked(1, (int)$opt['only_once']); ?>/> Publier une seule fois</label><br/>
+									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[share_on_update]" value="1" <?php checked(1, (int)$opt['share_on_update']); ?>/> Republier lors d’une mise à jour</label>
+								</td>
+							</tr>
+						</table>
+						<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+					</form>
+
+					<div class="pks-card pks-card--wide">
+						<div class="pks-card-title">Test</div>
+						<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié pour tenter un partage LinkedIn.</p>
+						<?php
+						$posts = get_posts([
+							'post_type' => $opt['post_type_whitelist'],
+							'post_status' => 'publish',
+							'numberposts' => 20,
+							'orderby' => 'date',
+							'order' => 'DESC',
+						]);
+						?>
+						<table class="widefat striped" style="max-width: 980px;">
+							<thead>
+								<tr>
+									<th style="width:60px;">ID</th>
+									<th style="width:64px;">Image</th>
+									<th>Article</th>
+									<th style="width:220px;">Statut LinkedIn</th>
+									<th style="width:180px;">Action</th>
+								</tr>
+							</thead>
+							<tbody>
+							<?php if (!$posts): ?>
+								<tr><td colspan="5">Aucun article publié trouvé.</td></tr>
+							<?php else: ?>
+								<?php foreach ($posts as $p): ?>
+									<?php
+									$shared_at = (int)get_post_meta($p->ID, self::META_SHARED_AT, true);
+									$share_urn = (string)get_post_meta($p->ID, self::META_SHARE_URN, true);
+									$status = $shared_at ? ('Partagé le ' . esc_html(wp_date('Y-m-d H:i', $shared_at)) . ($share_urn ? '<br/><code style="font-size:11px;">' . esc_html($share_urn) . '</code>' : '')) : 'Jamais partagé';
+									$action_url = wp_nonce_url(self::admin_url_action('pkliap_test_post') . '&post_id=' . (int)$p->ID, 'pkliap_test_post_' . (int)$p->ID);
+									$edit_url = get_edit_post_link($p->ID, '');
+									$thumb_html = get_the_post_thumbnail($p->ID, [48, 48], ['style' => 'width:48px;height:48px;object-fit:cover;border-radius:4px;']);
+									?>
+									<tr>
+										<td><?php echo (int)$p->ID; ?></td>
+										<td><?php echo $thumb_html ?: '<span style="opacity:.6;">—</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+										<td>
+											<strong><?php echo esc_html($p->post_title ?: '(Sans titre)'); ?></strong>
+											<div class="row-actions">
+												<span><a href="<?php echo esc_url(get_permalink($p->ID)); ?>" target="_blank" rel="noopener">Voir</a> | </span>
+												<span><a href="<?php echo esc_url($edit_url ?: '#'); ?>">Modifier</a></span>
+											</div>
+										</td>
+										<td><?php echo $status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+										<td><a class="button button-secondary" href="<?php echo esc_url($action_url); ?>">Publier maintenant</a></td>
+									</tr>
+								<?php endforeach; ?>
+							<?php endif; ?>
+							</tbody>
+						</table>
+					</div>
+
+					<div class="pks-card pks-card--accent-warn pks-card--wide">
+						<div class="pks-card-title">Debug / Logs</div>
+						<form method="post" action="options.php">
+							<?php settings_fields('pkliap'); ?>
+							<table class="form-table" role="presentation">
+								<tr>
+									<th scope="row">Logs</th>
+									<td>
+										<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[log_enabled]" value="1" <?php checked(1, (int)$opt['log_enabled']); ?>/> Activer <code>error_log()</code></label>
+										<p class="description">Utile pour diagnostiquer (Wordfence/cache/scopes). Désactive si tu ne veux aucun log côté serveur.</p>
+									</td>
+								</tr>
+								<tr>
+									<th scope="row">Dernière erreur partage</th>
+									<td>
+										<?php if (!empty($opt['last_share_error'])): ?>
+											<p class="description" style="color:#b32d2e;margin:0;">
+												<?php echo esc_html($opt['last_share_error']); ?>
+												<?php if (!empty($opt['last_share_error_at'])): ?>
+													<br/>Le <?php echo esc_html(wp_date('Y-m-d H:i', (int)$opt['last_share_error_at'])); ?>
+												<?php endif; ?>
+											</p>
+										<?php else: ?>
+											<p class="description" style="margin:0;">—</p>
+										<?php endif; ?>
+									</td>
+								</tr>
+							</table>
+							<?php submit_button('Enregistrer', 'secondary', 'submit', false); ?>
+						</form>
+					</div>
+				</div>
+			</div>
 		</div>
 		<?php
 	}
@@ -325,14 +731,17 @@ final class PKLIAP_Plugin {
 		$redirect_uri = $opt['redirect_uri'] ?: self::admin_url_action('pkliap_oauth_callback');
 
 		$state = wp_generate_password(24, false, false);
-		update_option('pkliap_oauth_state', $state, false);
+		$user_id = get_current_user_id();
+		// Stocker un state par utilisateur avec expiration pour éviter les collisions (multi-tabs / multi-admins / cache).
+		set_transient('pkliap_oauth_state_' . $user_id, $state, 10 * MINUTE_IN_SECONDS);
 
+		// LinkedIn migre vers OpenID Connect. Pour éviter les erreurs de scopes non autorisés,
+		// on utilise OIDC pour identifier le membre (userinfo) + w_member_social pour poster.
 		$scope = [
-			'r_liteprofile',
-			'r_emailaddress',
+			'openid',
+			'profile',
+			'email',
 			'w_member_social',
-			'w_organization_social',
-			'r_organization_social',
 		];
 
 		$args = [
@@ -354,8 +763,9 @@ final class PKLIAP_Plugin {
 		}
 		// Pas de nonce ici (appel externe). On vérifie state.
 		$state = isset($_GET['state']) ? sanitize_text_field((string)wp_unslash($_GET['state'])) : '';
-		$expected_state = (string)get_option('pkliap_oauth_state', '');
-		delete_option('pkliap_oauth_state');
+		$user_id = get_current_user_id();
+		$expected_state = (string)get_transient('pkliap_oauth_state_' . $user_id);
+		delete_transient('pkliap_oauth_state_' . $user_id);
 
 		if (!$state || !$expected_state || !hash_equals($expected_state, $state)) {
 			wp_safe_redirect(self::settings_url(['pkliap_error' => 'State OAuth invalide.']));
@@ -373,6 +783,9 @@ final class PKLIAP_Plugin {
 
 		$token = self::linkedin_exchange_code_for_token($opt['client_id'], $opt['client_secret'], $redirect_uri, $code);
 		if (is_wp_error($token)) {
+			self::update_options([
+				'last_oauth_error' => $token->get_error_message(),
+			]);
 			wp_safe_redirect(self::settings_url(['pkliap_error' => $token->get_error_message()]));
 			exit;
 		}
@@ -383,18 +796,60 @@ final class PKLIAP_Plugin {
 		$refresh_expires_in = (int)($token['refresh_token_expires_in'] ?? 0);
 
 		if (!$access_token) {
+			self::update_options([
+				'last_oauth_error' => 'Réponse token invalide (access_token manquant).',
+			]);
 			wp_safe_redirect(self::settings_url(['pkliap_error' => 'Réponse token invalide (access_token manquant).']));
 			exit;
 		}
 
-		self::update_options([
+		$expires_at = $expires_in ? (time() + $expires_in - 60) : 0;
+		$refresh_expires_at = $refresh_expires_in ? (time() + $refresh_expires_in - 60) : 0;
+
+		self::set_tokens([
 			'access_token' => $access_token,
-			'access_token_expires_at' => $expires_in ? (time() + $expires_in - 60) : 0,
+			'access_token_expires_at' => $expires_at,
 			'refresh_token' => $refresh_token,
-			'refresh_token_expires_at' => $refresh_expires_in ? (time() + $refresh_expires_in - 60) : 0,
+			'refresh_token_expires_at' => $refresh_expires_at,
+		]);
+		self::update_options([
+			'last_author_detect_error' => '',
+			'last_oauth_at' => time(),
+			'last_oauth_token_len' => strlen($access_token),
+			'last_oauth_error' => '',
 		]);
 
-		wp_safe_redirect(self::settings_url(['pkliap_notice' => 'Connecté à LinkedIn.']));
+		$notice = 'Connecté à LinkedIn.';
+		$error = '';
+
+		// Auto-détection de l'URN profil (urn:li:person:...) pour éviter une config manuelle.
+		$opt_after = self::get_options();
+		// Sanity check: si le token n'est pas stocké, on remonte une erreur explicite.
+		if (empty($opt_after['access_token'])) {
+			self::update_options([
+				'last_oauth_error' => 'Token non persisté après OAuth. Suspect: plugin de sécurité/cache, object-cache, ou restriction base de données.',
+			]);
+			wp_safe_redirect(self::settings_url(['pkliap_error' => 'Connecté, mais le token n’a pas été persisté. Désactive temporairement Wordfence/cache, puis reconnecte.']));
+			exit;
+		}
+		if (empty($opt_after['author_urn'])) {
+			$me_id = self::linkedin_get_member_id($access_token);
+			if (is_wp_error($me_id)) {
+				$detect_error = $me_id->get_error_message();
+				self::update_options([
+					'last_author_detect_error' => $detect_error,
+				]);
+				$error = 'Connecté, mais impossible de détecter automatiquement le profil LinkedIn (Author URN). ' . $detect_error;
+			} else {
+				self::update_options([
+					'author_urn' => 'urn:li:person:' . $me_id,
+					'last_author_detect_error' => '',
+				]);
+				$notice = 'Connecté à LinkedIn. Author URN détecté automatiquement (profil).';
+			}
+		}
+
+		wp_safe_redirect(self::settings_url($error ? ['pkliap_error' => $error] : ['pkliap_notice' => $notice]));
 		exit;
 	}
 
@@ -404,14 +859,51 @@ final class PKLIAP_Plugin {
 		}
 		check_admin_referer('pkliap_disconnect');
 
-		self::update_options([
+		self::set_tokens([
 			'access_token' => '',
 			'access_token_expires_at' => 0,
 			'refresh_token' => '',
 			'refresh_token_expires_at' => 0,
 		]);
+		self::update_options([
+			'author_urn' => '',
+			'last_author_detect_error' => '',
+			'last_share_error' => '',
+			'last_share_error_at' => 0,
+			'last_oauth_error' => '',
+		]);
 
 		wp_safe_redirect(self::settings_url(['pkliap_notice' => 'Déconnecté.']));
+		exit;
+	}
+
+	public static function handle_detect_author(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_detect_author');
+
+		$opt = self::get_options();
+		if (empty($opt['access_token'])) {
+			wp_safe_redirect(self::settings_url(['pkliap_error' => 'Non connecté à LinkedIn (token manquant).']));
+			exit;
+		}
+
+		$me_id = self::linkedin_get_member_id($opt['access_token']);
+		if (is_wp_error($me_id)) {
+			self::update_options([
+				'last_author_detect_error' => $me_id->get_error_message(),
+			]);
+			wp_safe_redirect(self::settings_url(['pkliap_error' => 'Impossible de détecter automatiquement le profil LinkedIn. ' . $me_id->get_error_message()]));
+			exit;
+		}
+
+		self::update_options([
+			'author_urn' => 'urn:li:person:' . $me_id,
+			'last_author_detect_error' => '',
+		]);
+
+		wp_safe_redirect(self::settings_url(['pkliap_notice' => 'Author URN détecté automatiquement (profil).']));
 		exit;
 	}
 
@@ -419,20 +911,27 @@ final class PKLIAP_Plugin {
 		if (!current_user_can('manage_options')) {
 			wp_die('Forbidden');
 		}
-		check_admin_referer('pkliap_test_post');
-
-		$post_id = isset($_POST['post_id']) ? (int)$_POST['post_id'] : 0;
+		$post_id = isset($_REQUEST['post_id']) ? (int)$_REQUEST['post_id'] : 0;
 		if (!$post_id) {
 			wp_safe_redirect(self::settings_url(['pkliap_error' => 'post_id manquant.']));
 			exit;
 		}
+		check_admin_referer('pkliap_test_post_' . $post_id);
 
 		$res = self::share_post_to_linkedin($post_id, true);
 		if (is_wp_error($res)) {
+			self::update_options([
+				'last_share_error' => $res->get_error_message(),
+				'last_share_error_at' => time(),
+			]);
 			wp_safe_redirect(self::settings_url(['pkliap_error' => $res->get_error_message()]));
 			exit;
 		}
 
+		self::update_options([
+			'last_share_error' => '',
+			'last_share_error_at' => 0,
+		]);
 		wp_safe_redirect(self::settings_url(['pkliap_notice' => 'Post LinkedIn envoyé.']));
 		exit;
 	}
@@ -463,7 +962,18 @@ final class PKLIAP_Plugin {
 		// Éviter de bloquer la publication : on fait une tentative mais on ne stoppe pas WP.
 		$res = self::share_post_to_linkedin($post->ID, false);
 		if (is_wp_error($res)) {
-			error_log('[pkliap] LinkedIn share failed for post #' . $post->ID . ': ' . $res->get_error_message());
+			self::update_options([
+				'last_share_error' => $res->get_error_message(),
+				'last_share_error_at' => time(),
+			]);
+			if (!empty($opt['log_enabled'])) {
+				error_log('[pkliap] LinkedIn share failed for post #' . $post->ID . ': ' . $res->get_error_message());
+			}
+		} else {
+			self::update_options([
+				'last_share_error' => '',
+				'last_share_error_at' => 0,
+			]);
 		}
 	}
 
@@ -770,6 +1280,69 @@ final class PKLIAP_Plugin {
 			'headers' => $headers,
 			'body' => is_array($body) ? $body : [],
 		];
+	}
+
+	private static function linkedin_api_get(string $path, string $access_token, array $extra_headers = []): array|WP_Error {
+		$url = 'https://api.linkedin.com' . $path;
+		$res = wp_remote_get($url, [
+			'timeout' => 45,
+			'headers' => array_merge([
+				'Authorization' => 'Bearer ' . $access_token,
+				'Content-Type' => 'application/json',
+			], $extra_headers),
+		]);
+
+		if (is_wp_error($res)) {
+			return $res;
+		}
+
+		$code = (int)wp_remote_retrieve_response_code($res);
+		$body_raw = (string)wp_remote_retrieve_body($res);
+		$body = json_decode($body_raw, true);
+
+		if ($code < 200 || $code >= 300) {
+			$msg = 'Erreur API LinkedIn (HTTP ' . $code . ').';
+			if (is_array($body) && !empty($body['message'])) {
+				$msg .= ' ' . (string)$body['message'];
+			} elseif (is_array($body) && !empty($body['error_description'])) {
+				$msg .= ' ' . (string)$body['error_description'];
+			}
+			return new WP_Error('pkliap_api_error', $msg);
+		}
+
+		if (!is_array($body)) {
+			$body = [];
+		}
+
+		return [
+			'code' => $code,
+			'headers' => [],
+			'body' => $body,
+		];
+	}
+
+	private static function linkedin_get_member_id(string $access_token): string|WP_Error {
+		// 1) OIDC userinfo (recommandé)
+		$userinfo = self::linkedin_api_get('/v2/userinfo', $access_token, []);
+		if (!is_wp_error($userinfo)) {
+			$sub = (string)($userinfo['body']['sub'] ?? '');
+			if ($sub) {
+				return $sub;
+			}
+		}
+
+		// 2) Fallback legacy /v2/me (peut nécessiter r_liteprofile selon le compte/app)
+		$res = self::linkedin_api_get('/v2/me', $access_token, [
+			'X-Restli-Protocol-Version' => '2.0.0',
+		]);
+		if (is_wp_error($res)) {
+			return $res;
+		}
+		$id = (string)($res['body']['id'] ?? '');
+		if (!$id) {
+			return new WP_Error('pkliap_me_failed', 'Réponse LinkedIn invalide : /v2/userinfo (sub manquant) et /v2/me (id manquant).');
+		}
+		return $id;
 	}
 }
 
