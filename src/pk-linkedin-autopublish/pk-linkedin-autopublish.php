@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.18
+ * Version: 0.19
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -415,12 +415,15 @@ final class PKLIAP_Plugin {
 				.pks-checkrow p{margin:2px 0 0;font-size:12px;color:var(--pks-muted)}
 			</style>
 
-			<?php if (!empty($_GET['pkliap_notice'])): ?>
-				<div class="notice notice-info"><p><?php echo esc_html((string)wp_unslash($_GET['pkliap_notice'])); ?></p></div>
-			<?php endif; ?>
-			<?php if (!empty($_GET['pkliap_error'])): ?>
-				<div class="notice notice-error"><p><?php echo esc_html((string)wp_unslash($_GET['pkliap_error'])); ?></p></div>
-			<?php endif; ?>
+			<?php
+			$flash = self::get_flash();
+			if (!empty($flash['notice'])) {
+				echo '<div class="notice notice-info"><p>' . esc_html((string)$flash['notice']) . '</p></div>';
+			}
+			if (!empty($flash['error'])) {
+				echo '<div class="notice notice-error"><p>' . esc_html((string)$flash['error']) . '</p></div>';
+			}
+			?>
 
 			<div class="pks-modern">
 				<div class="pks-grid">
@@ -724,7 +727,8 @@ final class PKLIAP_Plugin {
 
 		$opt = self::get_options();
 		if (empty($opt['client_id']) || empty($opt['client_secret'])) {
-			wp_safe_redirect(self::settings_url(['pkliap_error' => 'Renseignez Client ID / Client Secret avant de connecter.']));
+			self::set_flash('error', 'Renseignez Client ID / Client Secret avant de connecter.');
+			wp_safe_redirect(self::settings_url());
 			exit;
 		}
 
@@ -768,13 +772,15 @@ final class PKLIAP_Plugin {
 		delete_transient('pkliap_oauth_state_' . $user_id);
 
 		if (!$state || !$expected_state || !hash_equals($expected_state, $state)) {
-			wp_safe_redirect(self::settings_url(['pkliap_error' => 'State OAuth invalide.']));
+			self::set_flash('error', 'State OAuth invalide.');
+			wp_safe_redirect(self::settings_url());
 			exit;
 		}
 
 		$code = isset($_GET['code']) ? sanitize_text_field((string)wp_unslash($_GET['code'])) : '';
 		if (!$code) {
-			wp_safe_redirect(self::settings_url(['pkliap_error' => 'Code OAuth manquant.']));
+			self::set_flash('error', 'Code OAuth manquant.');
+			wp_safe_redirect(self::settings_url());
 			exit;
 		}
 
@@ -786,7 +792,8 @@ final class PKLIAP_Plugin {
 			self::update_options([
 				'last_oauth_error' => $token->get_error_message(),
 			]);
-			wp_safe_redirect(self::settings_url(['pkliap_error' => $token->get_error_message()]));
+			self::set_flash('error', $token->get_error_message());
+			wp_safe_redirect(self::settings_url());
 			exit;
 		}
 
@@ -799,7 +806,8 @@ final class PKLIAP_Plugin {
 			self::update_options([
 				'last_oauth_error' => 'Réponse token invalide (access_token manquant).',
 			]);
-			wp_safe_redirect(self::settings_url(['pkliap_error' => 'Réponse token invalide (access_token manquant).']));
+			self::set_flash('error', 'Réponse token invalide (access_token manquant).');
+			wp_safe_redirect(self::settings_url());
 			exit;
 		}
 
@@ -829,7 +837,8 @@ final class PKLIAP_Plugin {
 			self::update_options([
 				'last_oauth_error' => 'Token non persisté après OAuth. Suspect: plugin de sécurité/cache, object-cache, ou restriction base de données.',
 			]);
-			wp_safe_redirect(self::settings_url(['pkliap_error' => 'Connecté, mais le token n’a pas été persisté. Désactive temporairement Wordfence/cache, puis reconnecte.']));
+			self::set_flash('error', 'Connecté, mais le token n’a pas été persisté. Désactive temporairement Wordfence/cache, puis reconnecte.');
+			wp_safe_redirect(self::settings_url());
 			exit;
 		}
 		if (empty($opt_after['author_urn'])) {
@@ -849,7 +858,12 @@ final class PKLIAP_Plugin {
 			}
 		}
 
-		wp_safe_redirect(self::settings_url($error ? ['pkliap_error' => $error] : ['pkliap_notice' => $notice]));
+		if ($error) {
+			self::set_flash('error', $error);
+		} else {
+			self::set_flash('notice', $notice);
+		}
+		wp_safe_redirect(self::settings_url());
 		exit;
 	}
 
@@ -873,7 +887,8 @@ final class PKLIAP_Plugin {
 			'last_oauth_error' => '',
 		]);
 
-		wp_safe_redirect(self::settings_url(['pkliap_notice' => 'Déconnecté.']));
+		self::set_flash('notice', 'Déconnecté.');
+		wp_safe_redirect(self::settings_url());
 		exit;
 	}
 
@@ -885,7 +900,8 @@ final class PKLIAP_Plugin {
 
 		$opt = self::get_options();
 		if (empty($opt['access_token'])) {
-			wp_safe_redirect(self::settings_url(['pkliap_error' => 'Non connecté à LinkedIn (token manquant).']));
+			self::set_flash('error', 'Non connecté à LinkedIn (token manquant).');
+			wp_safe_redirect(self::settings_url());
 			exit;
 		}
 
@@ -894,7 +910,8 @@ final class PKLIAP_Plugin {
 			self::update_options([
 				'last_author_detect_error' => $me_id->get_error_message(),
 			]);
-			wp_safe_redirect(self::settings_url(['pkliap_error' => 'Impossible de détecter automatiquement le profil LinkedIn. ' . $me_id->get_error_message()]));
+			self::set_flash('error', 'Impossible de détecter automatiquement le profil LinkedIn. ' . $me_id->get_error_message());
+			wp_safe_redirect(self::settings_url());
 			exit;
 		}
 
@@ -903,7 +920,8 @@ final class PKLIAP_Plugin {
 			'last_author_detect_error' => '',
 		]);
 
-		wp_safe_redirect(self::settings_url(['pkliap_notice' => 'Author URN détecté automatiquement (profil).']));
+		self::set_flash('notice', 'Author URN détecté automatiquement (profil).');
+		wp_safe_redirect(self::settings_url());
 		exit;
 	}
 
@@ -913,7 +931,8 @@ final class PKLIAP_Plugin {
 		}
 		$post_id = isset($_REQUEST['post_id']) ? (int)$_REQUEST['post_id'] : 0;
 		if (!$post_id) {
-			wp_safe_redirect(self::settings_url(['pkliap_error' => 'post_id manquant.']));
+			self::set_flash('error', 'post_id manquant.');
+			wp_safe_redirect(self::settings_url());
 			exit;
 		}
 		check_admin_referer('pkliap_test_post_' . $post_id);
@@ -924,7 +943,8 @@ final class PKLIAP_Plugin {
 				'last_share_error' => $res->get_error_message(),
 				'last_share_error_at' => time(),
 			]);
-			wp_safe_redirect(self::settings_url(['pkliap_error' => $res->get_error_message()]));
+			self::set_flash('error', $res->get_error_message());
+			wp_safe_redirect(self::settings_url());
 			exit;
 		}
 
@@ -932,7 +952,8 @@ final class PKLIAP_Plugin {
 			'last_share_error' => '',
 			'last_share_error_at' => 0,
 		]);
-		wp_safe_redirect(self::settings_url(['pkliap_notice' => 'Post LinkedIn envoyé.']));
+		self::set_flash('notice', 'Post LinkedIn envoyé.');
+		wp_safe_redirect(self::settings_url());
 		exit;
 	}
 
@@ -1218,22 +1239,25 @@ final class PKLIAP_Plugin {
 	}
 
 	private static function linkedin_version_header(string $v): string {
-		$v = preg_replace('/[^0-9]/', '', $v) ?? '';
-		// On accepte YYYYMM (ex: 202604) et on l'étend en YYYYMM01 pour l'en-tête.
-		if (preg_match('/^[0-9]{6}$/', $v)) {
-			return $v . '01';
+		$raw = trim($v);
+		// LinkedIn attend YYYYMM ou YYYYMM.RR (revision). On normalise ce que l'admin saisit.
+		if (preg_match('/^[0-9]{6}\\.[0-9]{2}$/', $raw)) {
+			return $raw;
 		}
-		// Si déjà YYYYMMDD, on utilise tel quel.
-		if (preg_match('/^[0-9]{8}$/', $v)) {
-			return $v;
+		$digits = preg_replace('/[^0-9]/', '', $raw) ?? '';
+		if (preg_match('/^[0-9]{6}$/', $digits)) {
+			return $digits; // YYYYMM
 		}
-		// Fallback: mois courant en UTC (YYYYMM01).
-		return gmdate('Ym') . '01';
+		if (preg_match('/^[0-9]{8}$/', $digits)) {
+			return substr($digits, 0, 6); // YYYYMM (drop day)
+		}
+		return gmdate('Ym');
 	}
 
 	private static function linkedin_prev_month_version(string $version_header): string {
-		$version_header = preg_replace('/[^0-9]/', '', $version_header) ?? '';
-		if (!preg_match('/^([0-9]{4})([0-9]{2})/', $version_header, $m)) {
+		$raw = trim($version_header);
+		$digits = preg_replace('/[^0-9]/', '', $raw) ?? '';
+		if (!preg_match('/^([0-9]{4})([0-9]{2})/', $digits, $m)) {
 			return '';
 		}
 		$y = (int)$m[1];
@@ -1243,7 +1267,30 @@ final class PKLIAP_Plugin {
 			$mo = 12;
 			$y--;
 		}
-		return sprintf('%04d%02d01', $y, $mo);
+		// Keep simple YYYYMM (most compatible).
+		return sprintf('%04d%02d', $y, $mo);
+	}
+
+	private static function flash_key(): string {
+		return 'pkliap_flash_' . (int)get_current_user_id();
+	}
+
+	private static function set_flash(string $type, string $message): void {
+		if (!in_array($type, ['notice', 'error'], true)) {
+			return;
+		}
+		$data = get_transient(self::flash_key());
+		if (!is_array($data)) {
+			$data = [];
+		}
+		$data[$type] = $message;
+		set_transient(self::flash_key(), $data, 60);
+	}
+
+	private static function get_flash(): array {
+		$data = get_transient(self::flash_key());
+		delete_transient(self::flash_key());
+		return is_array($data) ? $data : [];
 	}
 
 	private static function linkedin_exchange_code_for_token(string $client_id, string $client_secret, string $redirect_uri, string $code): array|WP_Error {
