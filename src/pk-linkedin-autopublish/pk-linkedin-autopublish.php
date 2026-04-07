@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.22
+ * Version: 0.23
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -1072,11 +1072,15 @@ final class PKLIAP_Plugin {
 					&& (strpos($msg, 'registerUpload') !== false || strpos($msg, 'partnerApiAssets') !== false)
 				) {
 					$warn_no_image = 'Post publié sans image (permissions LinkedIn Assets manquantes).';
+					$asset_urn = '';
+					$asset_urn_res = '';
 				} else {
 					return $asset_urn_res;
 				}
 			}
-			$asset_urn = (string)$asset_urn_res;
+			if (!is_wp_error($asset_urn_res) && $asset_urn_res) {
+				$asset_urn = (string)$asset_urn_res;
+			}
 		}
 
 		$payload = [
