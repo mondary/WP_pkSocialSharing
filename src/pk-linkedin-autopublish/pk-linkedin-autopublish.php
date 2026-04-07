@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.20
+ * Version: 0.21
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -142,11 +142,11 @@ final class PKLIAP_Plugin {
 	}
 
 	private static function sync_is_safe_rel_path(string $rel): bool {
-		if ($rel === '' || str_contains($rel, "\0")) {
+		if ($rel === '' || strpos($rel, "\0") !== false) {
 			return false;
 		}
 		// Prevent traversal.
-		if (str_contains($rel, '..') || str_starts_with($rel, '.')) {
+		if (strpos($rel, '..') !== false || strncmp($rel, '.', 1) === 0) {
 			return false;
 		}
 		// Only allow a safe set of characters.
@@ -167,7 +167,7 @@ final class PKLIAP_Plugin {
 			$rel = str_replace('\\', '/', $rel);
 
 			// Skip runtime/generated.
-			if (str_contains($rel, '/.DS_Store') || str_contains($rel, '/.git') || str_contains($rel, '/node_modules/')) {
+			if (strpos($rel, '/.DS_Store') !== false || strpos($rel, '/.git') !== false || strpos($rel, '/node_modules/') !== false) {
 				continue;
 			}
 			if (!self::sync_is_safe_rel_path($rel)) {
@@ -1005,7 +1005,8 @@ final class PKLIAP_Plugin {
 		}
 	}
 
-	private static function share_post_to_linkedin(int $post_id, bool $force): array|WP_Error {
+	/** @return array|WP_Error */
+	private static function share_post_to_linkedin(int $post_id, bool $force) {
 		$post = get_post($post_id);
 		if (!$post || $post->post_status !== 'publish') {
 			return new WP_Error('pkliap_invalid_post', 'Article non publié.');
@@ -1038,8 +1039,8 @@ final class PKLIAP_Plugin {
 				// Si LinkedIn refuse l'upload d'assets (permissions), on publie quand même sans image.
 				$msg = $asset_urn_res->get_error_message();
 				if (
-					str_contains($msg, 'Not enough permissions')
-					&& (str_contains($msg, 'registerUpload') || str_contains($msg, 'partnerApiAssets'))
+					strpos($msg, 'Not enough permissions') !== false
+					&& (strpos($msg, 'registerUpload') !== false || strpos($msg, 'partnerApiAssets') !== false)
 				) {
 					$warn_no_image = 'Post publié sans image (permissions LinkedIn Assets manquantes).';
 				} else {
@@ -1177,7 +1178,8 @@ final class PKLIAP_Plugin {
 		return rtrim(substr($s, 0, max(0, $max - 1))) . '…';
 	}
 
-	private static function upload_featured_image(int $attachment_id, array $opt): string|WP_Error {
+	/** @return string|WP_Error */
+	private static function upload_featured_image(int $attachment_id, array $opt) {
 		$file = get_attached_file($attachment_id);
 		if (!$file || !file_exists($file)) {
 			return new WP_Error('pkliap_no_image', 'Image mise en avant introuvable.');
@@ -1208,7 +1210,7 @@ final class PKLIAP_Plugin {
 
 		// LinkedIn renvoie parfois HTTP 426 si la version demandée n'est pas active (ex: 20260401).
 		// Fallback: retenter avec le mois précédent (YYYYMM01).
-		if (is_wp_error($register) && $register->get_error_code() === 'pkliap_api_error' && str_contains($register->get_error_message(), 'HTTP 426')) {
+		if (is_wp_error($register) && $register->get_error_code() === 'pkliap_api_error' && strpos($register->get_error_message(), 'HTTP 426') !== false) {
 			$prev = self::linkedin_prev_month_version($version_header);
 			if ($prev) {
 				$register = self::linkedin_api_post('/rest/assets?action=registerUpload', $register_payload, $opt['access_token'], [
@@ -1311,7 +1313,8 @@ final class PKLIAP_Plugin {
 		return is_array($data) ? $data : [];
 	}
 
-	private static function linkedin_exchange_code_for_token(string $client_id, string $client_secret, string $redirect_uri, string $code): array|WP_Error {
+	/** @return array|WP_Error */
+	private static function linkedin_exchange_code_for_token(string $client_id, string $client_secret, string $redirect_uri, string $code) {
 		$res = wp_remote_post('https://www.linkedin.com/oauth/v2/accessToken', [
 			'timeout' => 30,
 			'headers' => [
@@ -1349,7 +1352,8 @@ final class PKLIAP_Plugin {
 		return $body;
 	}
 
-	private static function linkedin_api_post(string $path, array $payload, string $access_token, array $extra_headers = []): array|WP_Error {
+	/** @return array|WP_Error */
+	private static function linkedin_api_post(string $path, array $payload, string $access_token, array $extra_headers = []) {
 		$url = 'https://api.linkedin.com' . $path;
 		$res = wp_remote_post($url, [
 			'timeout' => 45,
@@ -1395,7 +1399,8 @@ final class PKLIAP_Plugin {
 		];
 	}
 
-	private static function linkedin_api_get(string $path, string $access_token, array $extra_headers = []): array|WP_Error {
+	/** @return array|WP_Error */
+	private static function linkedin_api_get(string $path, string $access_token, array $extra_headers = []) {
 		$url = 'https://api.linkedin.com' . $path;
 		$res = wp_remote_get($url, [
 			'timeout' => 45,
@@ -1434,7 +1439,8 @@ final class PKLIAP_Plugin {
 		];
 	}
 
-	private static function linkedin_get_member_id(string $access_token): string|WP_Error {
+	/** @return string|WP_Error */
+	private static function linkedin_get_member_id(string $access_token) {
 		// 1) OIDC userinfo (recommandé)
 		$userinfo = self::linkedin_api_get('/v2/userinfo', $access_token, []);
 		if (!is_wp_error($userinfo)) {
