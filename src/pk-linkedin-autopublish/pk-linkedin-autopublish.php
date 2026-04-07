@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.24
+ * Version: 0.26
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -209,6 +209,9 @@ final class PKLIAP_Plugin {
 			'visibility' => 'PUBLIC',
 			'prefix' => '',
 			'suffix' => '',
+			'include_title' => 1,
+			'include_excerpt' => 1,
+			'include_url' => 1,
 			'use_wp_shortlink' => 1,
 			'post_type_whitelist' => ['post'],
 			'share_on_update' => 0,
@@ -218,7 +221,10 @@ final class PKLIAP_Plugin {
 			'utm_medium' => 'social',
 			'utm_campaign' => 'autopublish',
 			'last_author_detect_error' => '',
-			'require_image' => 1,
+			// "opengraph" = pas d'upload image : LinkedIn fait le preview depuis l'URL (og:image).
+			// "upload" = upload featured image via Assets/registerUpload (souvent restreint).
+			'media_mode' => 'opengraph',
+			'require_image' => 0,
 			'last_assets_error' => '',
 			'last_assets_error_at' => 0,
 			'log_enabled' => 1,
@@ -305,6 +311,9 @@ final class PKLIAP_Plugin {
 		$out['visibility'] = in_array((string)($value['visibility'] ?? ''), ['PUBLIC', 'CONNECTIONS', 'LOGGED_IN'], true) ? (string)$value['visibility'] : $defaults['visibility'];
 		$out['prefix'] = sanitize_text_field((string)($value['prefix'] ?? ''));
 		$out['suffix'] = sanitize_text_field((string)($value['suffix'] ?? ''));
+		$out['include_title'] = empty($value['include_title']) ? 0 : 1;
+		$out['include_excerpt'] = empty($value['include_excerpt']) ? 0 : 1;
+		$out['include_url'] = empty($value['include_url']) ? 0 : 1;
 		$out['use_wp_shortlink'] = empty($value['use_wp_shortlink']) ? 0 : 1;
 		$out['share_on_update'] = empty($value['share_on_update']) ? 0 : 1;
 		$out['only_once'] = empty($value['only_once']) ? 0 : 1;
@@ -314,6 +323,7 @@ final class PKLIAP_Plugin {
 		$out['utm_campaign'] = sanitize_text_field((string)($value['utm_campaign'] ?? $defaults['utm_campaign']));
 		$out['log_enabled'] = empty($value['log_enabled']) ? 0 : 1;
 		$out['require_image'] = empty($value['require_image']) ? 0 : 1;
+		$out['media_mode'] = in_array((string)($value['media_mode'] ?? ''), ['opengraph', 'upload'], true) ? (string)$value['media_mode'] : $defaults['media_mode'];
 
 		$post_types = array_filter(array_map('sanitize_key', (array)($value['post_type_whitelist'] ?? $defaults['post_type_whitelist'])));
 		$out['post_type_whitelist'] = $post_types ? array_values(array_unique($post_types)) : $defaults['post_type_whitelist'];
@@ -630,6 +640,19 @@ final class PKLIAP_Plugin {
 							<tr>
 								<th scope="row">Texte</th>
 								<td>
+									<p style="margin:0 0 6px;"><strong>Composition</strong></p>
+									<label style="display:block;margin:2px 0;">
+										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_title]" value="1" <?php checked(1, (int)$opt['include_title']); ?>/>
+										Inclure le titre
+									</label>
+									<label style="display:block;margin:2px 0;">
+										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_excerpt]" value="1" <?php checked(1, (int)$opt['include_excerpt']); ?>/>
+										Inclure l’extrait
+									</label>
+									<label style="display:block;margin:2px 0 10px;">
+										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_url]" value="1" <?php checked(1, (int)$opt['include_url']); ?>/>
+										Inclure l’URL
+									</label>
 									<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label><br/>
 									<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
 								</td>
@@ -644,8 +667,21 @@ final class PKLIAP_Plugin {
 							<tr>
 								<th scope="row">Image</th>
 								<td>
-									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[require_image]" value="1" <?php checked(1, (int)$opt['require_image']); ?>/> Image obligatoire (Featured image)</label>
-									<p class="description">Si activé (recommandé), le partage échoue si LinkedIn refuse <code>registerUpload</code> (Assets). Si désactivé, le plugin publie sans image.</p>
+									<p style="margin:0 0 6px;"><strong>Mode média</strong></p>
+									<label style="display:block;margin:2px 0;">
+										<input type="radio" name="<?php echo esc_attr(self::OPT_KEY); ?>[media_mode]" value="opengraph" <?php checked('opengraph', (string)$opt['media_mode']); ?>/>
+										Preview via URL (OpenGraph) — recommandé
+									</label>
+									<p class="description" style="margin-top:0;">LinkedIn génère l’image depuis <code>og:image</code> de ton article (pas besoin d’upload API).</p>
+									<label style="display:block;margin:8px 0 2px;">
+										<input type="radio" name="<?php echo esc_attr(self::OPT_KEY); ?>[media_mode]" value="upload" <?php checked('upload', (string)$opt['media_mode']); ?>/>
+										Upload image mise en avant (Assets/registerUpload)
+									</label>
+									<p class="description" style="margin-top:0;">Nécessite une permission LinkedIn souvent refusée. Si 403, ça ne marchera pas.</p>
+									<label style="display:block;margin-top:10px;">
+										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[require_image]" value="1" <?php checked(1, (int)$opt['require_image']); ?>/>
+										Image obligatoire (si pas d’image/si upload refusé → erreur)
+									</label>
 								</td>
 							</tr>
 						</table>
@@ -1083,44 +1119,53 @@ final class PKLIAP_Plugin {
 		$link = self::get_post_link($post_id, $opt);
 		$text = self::build_linkedin_text($post_id, $opt, $link);
 
-		$asset_urn = '';
 		$warn_no_image = '';
+		$media_mode = (string)($opt['media_mode'] ?? 'opengraph');
+
+		$asset_urn = '';
 		$thumb_id = get_post_thumbnail_id($post_id);
-		if (!empty($opt['require_image']) && !$thumb_id) {
-			return new WP_Error('pkliap_image_required', 'Image obligatoire : ajoute une image mise en avant (Featured image) sur cet article.');
-		}
-		if ($thumb_id) {
-			$asset_urn_res = self::upload_featured_image($thumb_id, $opt);
-			if (is_wp_error($asset_urn_res)) {
-				// Si LinkedIn refuse l'upload d'assets (permissions), on publie quand même sans image.
-				$msg = $asset_urn_res->get_error_message();
-				if (
-					strpos($msg, 'Not enough permissions') !== false
-					&& (strpos($msg, 'registerUpload') !== false || strpos($msg, 'partnerApiAssets') !== false)
-				) {
-					self::update_options([
-						'last_assets_error' => $msg,
-						'last_assets_error_at' => time(),
-					]);
-					if (!empty($opt['require_image'])) {
-						return new WP_Error(
-							'pkliap_assets_permissions',
-							"LinkedIn refuse l’upload d’image (Assets/registerUpload). Dans LinkedIn Developers → Products, demande l’accès aux APIs/produits permettant l’upload d’assets. Détail: {$msg}"
-						);
+
+		if ($media_mode === 'upload') {
+			if (!empty($opt['require_image']) && !$thumb_id) {
+				return new WP_Error('pkliap_image_required', 'Image obligatoire : ajoute une image mise en avant (Featured image) sur cet article.');
+			}
+			if ($thumb_id) {
+				$asset_urn_res = self::upload_featured_image($thumb_id, $opt);
+				if (is_wp_error($asset_urn_res)) {
+					$msg = $asset_urn_res->get_error_message();
+					if (
+						strpos($msg, 'Not enough permissions') !== false
+						&& (strpos($msg, 'registerUpload') !== false || strpos($msg, 'partnerApiAssets') !== false)
+					) {
+						self::update_options([
+							'last_assets_error' => $msg,
+							'last_assets_error_at' => time(),
+						]);
+						if (!empty($opt['require_image'])) {
+							return new WP_Error(
+								'pkliap_assets_permissions',
+								"LinkedIn refuse l’upload d’image (Assets/registerUpload). Passe le mode média en “Preview via URL (OpenGraph)” ou demande l’accès LinkedIn Assets. Détail: {$msg}"
+							);
+						}
+						$warn_no_image = 'Post publié sans image (permissions LinkedIn Assets manquantes).';
+					} else {
+						return $asset_urn_res;
 					}
-					$warn_no_image = 'Post publié sans image (permissions LinkedIn Assets manquantes).';
-					$asset_urn = '';
-					$asset_urn_res = '';
-				} else {
-					return $asset_urn_res;
+				} elseif ($asset_urn_res) {
+					$asset_urn = (string)$asset_urn_res;
+					self::update_options([
+						'last_assets_error' => '',
+						'last_assets_error_at' => 0,
+					]);
 				}
 			}
-			if (!is_wp_error($asset_urn_res) && $asset_urn_res) {
-				$asset_urn = (string)$asset_urn_res;
-				self::update_options([
-					'last_assets_error' => '',
-					'last_assets_error_at' => 0,
-				]);
+		} else {
+			// mode opengraph: LinkedIn fait l'unfurl de l'URL (og:image).
+			if (!empty($opt['require_image'])) {
+				// On ne peut pas forcer LinkedIn à afficher le preview, mais on peut au moins exiger une featured image côté WP.
+				if (!$thumb_id) {
+					return new WP_Error('pkliap_image_required', 'Image obligatoire : ajoute une image mise en avant (Featured image) sur cet article.');
+				}
 			}
 		}
 
@@ -1132,7 +1177,7 @@ final class PKLIAP_Plugin {
 					'shareCommentary' => [
 						'text' => $text,
 					],
-					'shareMediaCategory' => $asset_urn ? 'IMAGE' : 'NONE',
+					'shareMediaCategory' => $asset_urn ? 'IMAGE' : (($media_mode === 'opengraph') ? 'ARTICLE' : 'NONE'),
 				],
 			],
 			'visibility' => [
@@ -1147,6 +1192,14 @@ final class PKLIAP_Plugin {
 				'media' => $asset_urn,
 				'title' => ['text' => get_the_title($post_id)],
 				'originalUrl' => $link,
+			]];
+		} elseif ($media_mode === 'opengraph') {
+			// Laisse LinkedIn générer un aperçu depuis l'URL (OpenGraph).
+			$payload['specificContent']['com.linkedin.ugc.ShareContent']['media'] = [[
+				'status' => 'READY',
+				'originalUrl' => $link,
+				'title' => ['text' => get_the_title($post_id)],
+				'description' => ['text' => self::safe_excerpt($post_id, 200)],
 			]];
 		}
 
@@ -1211,11 +1264,15 @@ final class PKLIAP_Plugin {
 		if ($opt['prefix']) {
 			$parts[] = $opt['prefix'];
 		}
-		$parts[] = $title;
-		if ($excerpt) {
+		if (!empty($opt['include_title'])) {
+			$parts[] = $title;
+		}
+		if (!empty($opt['include_excerpt']) && $excerpt) {
 			$parts[] = $excerpt;
 		}
-		$parts[] = $link;
+		if (!empty($opt['include_url'])) {
+			$parts[] = $link;
+		}
 		if ($opt['suffix']) {
 			$parts[] = $opt['suffix'];
 		}
