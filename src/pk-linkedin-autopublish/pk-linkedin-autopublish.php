@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.17
+ * Version: 0.18
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -1161,10 +1161,29 @@ final class PKLIAP_Plugin {
 			],
 		];
 
+		$version_header = self::linkedin_version_header((string)$opt['linkedin_version']);
 		$register = self::linkedin_api_post('/rest/assets?action=registerUpload', $register_payload, $opt['access_token'], [
-			'Linkedin-Version' => $opt['linkedin_version'],
+			'Linkedin-Version' => $version_header,
 			'X-Restli-Protocol-Version' => '2.0.0',
 		]);
+
+		// LinkedIn renvoie parfois HTTP 426 si la version demandée n'est pas active (ex: 20260401).
+		// Fallback: retenter avec le mois précédent (YYYYMM01).
+		if (is_wp_error($register) && $register->get_error_code() === 'pkliap_api_error' && str_contains($register->get_error_message(), 'HTTP 426')) {
+			$prev = self::linkedin_prev_month_version($version_header);
+			if ($prev) {
+				$register = self::linkedin_api_post('/rest/assets?action=registerUpload', $register_payload, $opt['access_token'], [
+					'Linkedin-Version' => $prev,
+					'X-Restli-Protocol-Version' => '2.0.0',
+				]);
+				if (!is_wp_error($register)) {
+					// Met à jour le réglage pour éviter de re-tomber sur 426.
+					self::update_options([
+						'linkedin_version' => substr($prev, 0, 6),
+					]);
+				}
+			}
+		}
 
 		if (is_wp_error($register)) {
 			return $register;
@@ -1196,6 +1215,35 @@ final class PKLIAP_Plugin {
 		}
 
 		return $asset;
+	}
+
+	private static function linkedin_version_header(string $v): string {
+		$v = preg_replace('/[^0-9]/', '', $v) ?? '';
+		// On accepte YYYYMM (ex: 202604) et on l'étend en YYYYMM01 pour l'en-tête.
+		if (preg_match('/^[0-9]{6}$/', $v)) {
+			return $v . '01';
+		}
+		// Si déjà YYYYMMDD, on utilise tel quel.
+		if (preg_match('/^[0-9]{8}$/', $v)) {
+			return $v;
+		}
+		// Fallback: mois courant en UTC (YYYYMM01).
+		return gmdate('Ym') . '01';
+	}
+
+	private static function linkedin_prev_month_version(string $version_header): string {
+		$version_header = preg_replace('/[^0-9]/', '', $version_header) ?? '';
+		if (!preg_match('/^([0-9]{4})([0-9]{2})/', $version_header, $m)) {
+			return '';
+		}
+		$y = (int)$m[1];
+		$mo = (int)$m[2];
+		$mo--;
+		if ($mo <= 0) {
+			$mo = 12;
+			$y--;
+		}
+		return sprintf('%04d%02d01', $y, $mo);
 	}
 
 	private static function linkedin_exchange_code_for_token(string $client_id, string $client_secret, string $redirect_uri, string $code): array|WP_Error {
