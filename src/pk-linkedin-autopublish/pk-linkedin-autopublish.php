@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.26
+ * Version: 0.27
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -300,33 +300,58 @@ final class PKLIAP_Plugin {
 	public static function sanitize_options($value): array {
 		$defaults = self::defaults();
 		$value = is_array($value) ? $value : [];
+		$current = self::get_options();
 
 		$out = [];
-		$out['enabled'] = empty($value['enabled']) ? 0 : 1;
-		$out['client_id'] = sanitize_text_field((string)($value['client_id'] ?? ''));
-		$out['client_secret'] = sanitize_text_field((string)($value['client_secret'] ?? ''));
-		$out['redirect_uri'] = esc_url_raw((string)($value['redirect_uri'] ?? ''));
-		$out['author_urn'] = sanitize_text_field((string)($value['author_urn'] ?? ''));
-		$out['linkedin_version'] = preg_match('/^[0-9]{6}$/', (string)($value['linkedin_version'] ?? '')) ? (string)$value['linkedin_version'] : $defaults['linkedin_version'];
-		$out['visibility'] = in_array((string)($value['visibility'] ?? ''), ['PUBLIC', 'CONNECTIONS', 'LOGGED_IN'], true) ? (string)$value['visibility'] : $defaults['visibility'];
-		$out['prefix'] = sanitize_text_field((string)($value['prefix'] ?? ''));
-		$out['suffix'] = sanitize_text_field((string)($value['suffix'] ?? ''));
-		$out['include_title'] = empty($value['include_title']) ? 0 : 1;
-		$out['include_excerpt'] = empty($value['include_excerpt']) ? 0 : 1;
-		$out['include_url'] = empty($value['include_url']) ? 0 : 1;
-		$out['use_wp_shortlink'] = empty($value['use_wp_shortlink']) ? 0 : 1;
-		$out['share_on_update'] = empty($value['share_on_update']) ? 0 : 1;
-		$out['only_once'] = empty($value['only_once']) ? 0 : 1;
-		$out['append_utm'] = empty($value['append_utm']) ? 0 : 1;
-		$out['utm_source'] = sanitize_text_field((string)($value['utm_source'] ?? $defaults['utm_source']));
-		$out['utm_medium'] = sanitize_text_field((string)($value['utm_medium'] ?? $defaults['utm_medium']));
-		$out['utm_campaign'] = sanitize_text_field((string)($value['utm_campaign'] ?? $defaults['utm_campaign']));
-		$out['log_enabled'] = empty($value['log_enabled']) ? 0 : 1;
-		$out['require_image'] = empty($value['require_image']) ? 0 : 1;
-		$out['media_mode'] = in_array((string)($value['media_mode'] ?? ''), ['opengraph', 'upload'], true) ? (string)$value['media_mode'] : $defaults['media_mode'];
+		// IMPORTANT: la page contient plusieurs formulaires. Quand un champ n'est pas envoyé, conserver la valeur existante.
+		$out['enabled'] = array_key_exists('enabled', $value) ? (empty($value['enabled']) ? 0 : 1) : (int)$current['enabled'];
+		$out['client_id'] = array_key_exists('client_id', $value) ? sanitize_text_field((string)$value['client_id']) : (string)$current['client_id'];
+		$out['client_secret'] = array_key_exists('client_secret', $value) ? sanitize_text_field((string)$value['client_secret']) : (string)$current['client_secret'];
+		$out['redirect_uri'] = array_key_exists('redirect_uri', $value) ? esc_url_raw((string)$value['redirect_uri']) : (string)$current['redirect_uri'];
+		$out['author_urn'] = array_key_exists('author_urn', $value) ? sanitize_text_field((string)$value['author_urn']) : (string)$current['author_urn'];
 
-		$post_types = array_filter(array_map('sanitize_key', (array)($value['post_type_whitelist'] ?? $defaults['post_type_whitelist'])));
-		$out['post_type_whitelist'] = $post_types ? array_values(array_unique($post_types)) : $defaults['post_type_whitelist'];
+		if (array_key_exists('linkedin_version', $value)) {
+			$out['linkedin_version'] = preg_match('/^[0-9]{6}$/', (string)$value['linkedin_version']) ? (string)$value['linkedin_version'] : $defaults['linkedin_version'];
+		} else {
+			$out['linkedin_version'] = (string)$current['linkedin_version'];
+		}
+
+		if (array_key_exists('visibility', $value)) {
+			$out['visibility'] = in_array((string)$value['visibility'], ['PUBLIC', 'CONNECTIONS', 'LOGGED_IN'], true) ? (string)$value['visibility'] : $defaults['visibility'];
+		} else {
+			$out['visibility'] = (string)$current['visibility'];
+		}
+
+		$out['prefix'] = array_key_exists('prefix', $value) ? sanitize_text_field((string)$value['prefix']) : (string)$current['prefix'];
+		$out['suffix'] = array_key_exists('suffix', $value) ? sanitize_text_field((string)$value['suffix']) : (string)$current['suffix'];
+
+		$out['include_title'] = array_key_exists('include_title', $value) ? (empty($value['include_title']) ? 0 : 1) : (int)$current['include_title'];
+		$out['include_excerpt'] = array_key_exists('include_excerpt', $value) ? (empty($value['include_excerpt']) ? 0 : 1) : (int)$current['include_excerpt'];
+		$out['include_url'] = array_key_exists('include_url', $value) ? (empty($value['include_url']) ? 0 : 1) : (int)$current['include_url'];
+
+		$out['use_wp_shortlink'] = array_key_exists('use_wp_shortlink', $value) ? (empty($value['use_wp_shortlink']) ? 0 : 1) : (int)$current['use_wp_shortlink'];
+		$out['share_on_update'] = array_key_exists('share_on_update', $value) ? (empty($value['share_on_update']) ? 0 : 1) : (int)$current['share_on_update'];
+		$out['only_once'] = array_key_exists('only_once', $value) ? (empty($value['only_once']) ? 0 : 1) : (int)$current['only_once'];
+		$out['append_utm'] = array_key_exists('append_utm', $value) ? (empty($value['append_utm']) ? 0 : 1) : (int)$current['append_utm'];
+
+		$out['utm_source'] = array_key_exists('utm_source', $value) ? sanitize_text_field((string)$value['utm_source']) : (string)$current['utm_source'];
+		$out['utm_medium'] = array_key_exists('utm_medium', $value) ? sanitize_text_field((string)$value['utm_medium']) : (string)$current['utm_medium'];
+		$out['utm_campaign'] = array_key_exists('utm_campaign', $value) ? sanitize_text_field((string)$value['utm_campaign']) : (string)$current['utm_campaign'];
+
+		$out['log_enabled'] = array_key_exists('log_enabled', $value) ? (empty($value['log_enabled']) ? 0 : 1) : (int)$current['log_enabled'];
+		$out['require_image'] = array_key_exists('require_image', $value) ? (empty($value['require_image']) ? 0 : 1) : (int)$current['require_image'];
+		if (array_key_exists('media_mode', $value)) {
+			$out['media_mode'] = in_array((string)$value['media_mode'], ['opengraph', 'upload'], true) ? (string)$value['media_mode'] : $defaults['media_mode'];
+		} else {
+			$out['media_mode'] = (string)$current['media_mode'];
+		}
+
+		if (array_key_exists('post_type_whitelist', $value)) {
+			$post_types = array_filter(array_map('sanitize_key', (array)$value['post_type_whitelist']));
+			$out['post_type_whitelist'] = $post_types ? array_values(array_unique($post_types)) : $defaults['post_type_whitelist'];
+		} else {
+			$out['post_type_whitelist'] = (array)$current['post_type_whitelist'];
+		}
 
 		// Ne pas stocker les tokens dans l'option tableau.
 		foreach ([
@@ -339,7 +364,7 @@ final class PKLIAP_Plugin {
 			'last_oauth_token_len',
 			'last_oauth_error',
 		] as $k) {
-			$out[$k] = self::get_options()[$k];
+			$out[$k] = $current[$k];
 		}
 
 		return $out;

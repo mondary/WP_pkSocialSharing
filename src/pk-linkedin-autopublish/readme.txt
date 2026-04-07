@@ -4,7 +4,7 @@ Tags: linkedin, social, autopublish
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 0.26
+Stable tag: 0.27
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn lors de la publication.
