@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.23
+ * Version: 0.24
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -218,6 +218,9 @@ final class PKLIAP_Plugin {
 			'utm_medium' => 'social',
 			'utm_campaign' => 'autopublish',
 			'last_author_detect_error' => '',
+			'require_image' => 1,
+			'last_assets_error' => '',
+			'last_assets_error_at' => 0,
 			'log_enabled' => 1,
 			'last_share_error' => '',
 			'last_share_error_at' => 0,
@@ -310,6 +313,7 @@ final class PKLIAP_Plugin {
 		$out['utm_medium'] = sanitize_text_field((string)($value['utm_medium'] ?? $defaults['utm_medium']));
 		$out['utm_campaign'] = sanitize_text_field((string)($value['utm_campaign'] ?? $defaults['utm_campaign']));
 		$out['log_enabled'] = empty($value['log_enabled']) ? 0 : 1;
+		$out['require_image'] = empty($value['require_image']) ? 0 : 1;
 
 		$post_types = array_filter(array_map('sanitize_key', (array)($value['post_type_whitelist'] ?? $defaults['post_type_whitelist'])));
 		$out['post_type_whitelist'] = $post_types ? array_values(array_unique($post_types)) : $defaults['post_type_whitelist'];
@@ -317,6 +321,8 @@ final class PKLIAP_Plugin {
 		// Ne pas stocker les tokens dans l'option tableau.
 		foreach ([
 			'last_author_detect_error',
+			'last_assets_error',
+			'last_assets_error_at',
 			'last_share_error',
 			'last_share_error_at',
 			'last_oauth_at',
@@ -478,6 +484,17 @@ final class PKLIAP_Plugin {
 									<p>Products : activer “Share on LinkedIn” (post) et idéalement “Sign In with LinkedIn using OpenID Connect” (pour identifier le membre via <code>/userinfo</code>). Voir : <a href="<?php echo esc_url($link_docs_oidc); ?>" target="_blank" rel="noopener">doc OIDC</a>.</p>
 								</div>
 							</div>
+							<div class="pks-checkrow">
+								<?php echo empty($opt['last_assets_error']) ? '<span class="pks-pill pks-pill--warn">À VALIDER</span>' : '<span class="pks-pill pks-pill--bad">BLOQUÉ</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<div>
+									<strong>Image obligatoire (Assets / registerUpload)</strong>
+									<p>Pour publier avec image, LinkedIn doit autoriser l’API d’upload “Assets” (action <code>registerUpload</code>). Sinon tu auras un 403 “Not enough permissions … registerUpload”.</p>
+									<p>Doc : <a href="<?php echo esc_url($link_docs_assets); ?>" target="_blank" rel="noopener">Asset / registerUpload</a>.</p>
+									<?php if (!empty($opt['last_assets_error'])): ?>
+										<p style="color:#b32d2e;margin:6px 0 0;">Dernière erreur Assets : <?php echo esc_html($opt['last_assets_error']); ?></p>
+									<?php endif; ?>
+								</div>
+							</div>
 						</div>
 					</div>
 
@@ -622,6 +639,13 @@ final class PKLIAP_Plugin {
 								<td>
 									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[only_once]" value="1" <?php checked(1, (int)$opt['only_once']); ?>/> Publier une seule fois</label><br/>
 									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[share_on_update]" value="1" <?php checked(1, (int)$opt['share_on_update']); ?>/> Republier lors d’une mise à jour</label>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Image</th>
+								<td>
+									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[require_image]" value="1" <?php checked(1, (int)$opt['require_image']); ?>/> Image obligatoire (Featured image)</label>
+									<p class="description">Si activé (recommandé), le partage échoue si LinkedIn refuse <code>registerUpload</code> (Assets). Si désactivé, le plugin publie sans image.</p>
 								</td>
 							</tr>
 						</table>
@@ -1062,6 +1086,9 @@ final class PKLIAP_Plugin {
 		$asset_urn = '';
 		$warn_no_image = '';
 		$thumb_id = get_post_thumbnail_id($post_id);
+		if (!empty($opt['require_image']) && !$thumb_id) {
+			return new WP_Error('pkliap_image_required', 'Image obligatoire : ajoute une image mise en avant (Featured image) sur cet article.');
+		}
 		if ($thumb_id) {
 			$asset_urn_res = self::upload_featured_image($thumb_id, $opt);
 			if (is_wp_error($asset_urn_res)) {
@@ -1071,6 +1098,16 @@ final class PKLIAP_Plugin {
 					strpos($msg, 'Not enough permissions') !== false
 					&& (strpos($msg, 'registerUpload') !== false || strpos($msg, 'partnerApiAssets') !== false)
 				) {
+					self::update_options([
+						'last_assets_error' => $msg,
+						'last_assets_error_at' => time(),
+					]);
+					if (!empty($opt['require_image'])) {
+						return new WP_Error(
+							'pkliap_assets_permissions',
+							"LinkedIn refuse l’upload d’image (Assets/registerUpload). Dans LinkedIn Developers → Products, demande l’accès aux APIs/produits permettant l’upload d’assets. Détail: {$msg}"
+						);
+					}
 					$warn_no_image = 'Post publié sans image (permissions LinkedIn Assets manquantes).';
 					$asset_urn = '';
 					$asset_urn_res = '';
@@ -1080,6 +1117,10 @@ final class PKLIAP_Plugin {
 			}
 			if (!is_wp_error($asset_urn_res) && $asset_urn_res) {
 				$asset_urn = (string)$asset_urn_res;
+				self::update_options([
+					'last_assets_error' => '',
+					'last_assets_error_at' => 0,
+				]);
 			}
 		}
 
