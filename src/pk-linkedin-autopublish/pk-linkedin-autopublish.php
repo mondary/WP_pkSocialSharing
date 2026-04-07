@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.19
+ * Version: 0.20
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -952,7 +952,11 @@ final class PKLIAP_Plugin {
 			'last_share_error' => '',
 			'last_share_error_at' => 0,
 		]);
-		self::set_flash('notice', 'Post LinkedIn envoyé.');
+		$notice = 'Post LinkedIn envoyé.';
+		if (is_array($res) && !empty($res['warning'])) {
+			$notice .= ' ' . (string)$res['warning'];
+		}
+		self::set_flash('notice', $notice);
 		wp_safe_redirect(self::settings_url());
 		exit;
 	}
@@ -995,6 +999,9 @@ final class PKLIAP_Plugin {
 				'last_share_error' => '',
 				'last_share_error_at' => 0,
 			]);
+			if (is_array($res) && !empty($res['warning']) && !empty($opt['log_enabled'])) {
+				error_log('[pkliap] LinkedIn share warning for post #' . $post->ID . ': ' . (string)$res['warning']);
+			}
 		}
 	}
 
@@ -1023,11 +1030,21 @@ final class PKLIAP_Plugin {
 		$text = self::build_linkedin_text($post_id, $opt, $link);
 
 		$asset_urn = '';
+		$warn_no_image = '';
 		$thumb_id = get_post_thumbnail_id($post_id);
 		if ($thumb_id) {
 			$asset_urn_res = self::upload_featured_image($thumb_id, $opt);
 			if (is_wp_error($asset_urn_res)) {
-				return $asset_urn_res;
+				// Si LinkedIn refuse l'upload d'assets (permissions), on publie quand même sans image.
+				$msg = $asset_urn_res->get_error_message();
+				if (
+					str_contains($msg, 'Not enough permissions')
+					&& (str_contains($msg, 'registerUpload') || str_contains($msg, 'partnerApiAssets'))
+				) {
+					$warn_no_image = 'Post publié sans image (permissions LinkedIn Assets manquantes).';
+				} else {
+					return $asset_urn_res;
+				}
 			}
 			$asset_urn = (string)$asset_urn_res;
 		}
@@ -1081,6 +1098,7 @@ final class PKLIAP_Plugin {
 
 		return [
 			'urn' => $urn,
+			'warning' => $warn_no_image,
 		];
 	}
 
