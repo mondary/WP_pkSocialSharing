@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.21
+ * Version: 0.22
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -937,7 +937,23 @@ final class PKLIAP_Plugin {
 		}
 		check_admin_referer('pkliap_test_post_' . $post_id);
 
-		$res = self::share_post_to_linkedin($post_id, true);
+		try {
+			$res = self::share_post_to_linkedin($post_id, true);
+		} catch (Throwable $e) {
+			$msg = 'Exception PHP: ' . get_class($e) . ' - ' . $e->getMessage();
+			self::update_options([
+				'last_share_error' => $msg,
+				'last_share_error_at' => time(),
+			]);
+			$opt_now = self::get_options();
+			if (!empty($opt_now['log_enabled'])) {
+				error_log('[pkliap] ' . $msg);
+				error_log('[pkliap] ' . $e->getTraceAsString());
+			}
+			self::set_flash('error', $msg);
+			wp_safe_redirect(self::settings_url());
+			exit;
+		}
 		if (is_wp_error($res)) {
 			self::update_options([
 				'last_share_error' => $res->get_error_message(),
@@ -985,7 +1001,20 @@ final class PKLIAP_Plugin {
 		}
 
 		// Éviter de bloquer la publication : on fait une tentative mais on ne stoppe pas WP.
-		$res = self::share_post_to_linkedin($post->ID, false);
+		try {
+			$res = self::share_post_to_linkedin($post->ID, false);
+		} catch (Throwable $e) {
+			$msg = 'Exception PHP: ' . get_class($e) . ' - ' . $e->getMessage();
+			self::update_options([
+				'last_share_error' => $msg,
+				'last_share_error_at' => time(),
+			]);
+			if (!empty($opt['log_enabled'])) {
+				error_log('[pkliap] ' . $msg);
+				error_log('[pkliap] ' . $e->getTraceAsString());
+			}
+			return;
+		}
 		if (is_wp_error($res)) {
 			self::update_options([
 				'last_share_error' => $res->get_error_message(),
