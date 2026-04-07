@@ -1387,18 +1387,26 @@ final class PKLIAP_Plugin {
 		}
 
 		$asset = (string)($register['body']['value']['asset'] ?? '');
-		$upload_url = (string)($register['body']['value']['uploadMechanism']['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']['uploadUrl'] ?? '');
+		$upload_mechanism = $register['body']['value']['uploadMechanism']['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'] ?? [];
+		$upload_url = (string)($upload_mechanism['uploadUrl'] ?? '');
 		if (!$asset || !$upload_url) {
 			return new WP_Error('pkliap_register_upload_failed', 'Impossible de récupérer asset/uploadUrl depuis registerUpload.');
 		}
 
+		$upload_headers = [
+			'Authorization' => 'Bearer ' . $opt['access_token'],
+			'Content-Type' => $mime,
+		];
+		if (!empty($upload_mechanism['headers']) && is_array($upload_mechanism['headers'])) {
+			foreach ($upload_mechanism['headers'] as $header_name => $header_value) {
+				$upload_headers[(string)$header_name] = is_array($header_value) ? implode(',', $header_value) : (string)$header_value;
+			}
+		}
+
 		$put = wp_remote_request($upload_url, [
-			'method' => 'PUT',
+			'method' => 'POST',
 			'timeout' => 45,
-			'headers' => [
-				'Authorization' => 'Bearer ' . $opt['access_token'],
-				'Content-Type' => $mime,
-			],
+			'headers' => $upload_headers,
 			'body' => file_get_contents($file),
 		]);
 
