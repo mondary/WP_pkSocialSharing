@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.30
+ * Version: 0.31
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -212,6 +212,7 @@ final class PKLIAP_Plugin {
 			'include_title' => 1,
 			'include_excerpt' => 1,
 			'include_url' => 1,
+			'content_order' => 'title,excerpt,url',
 			'use_wp_shortlink' => 1,
 			'post_type_whitelist' => ['post'],
 			'share_on_update' => 0,
@@ -328,6 +329,11 @@ final class PKLIAP_Plugin {
 		$out['include_title'] = array_key_exists('include_title', $value) ? (empty($value['include_title']) ? 0 : 1) : (int)$current['include_title'];
 		$out['include_excerpt'] = array_key_exists('include_excerpt', $value) ? (empty($value['include_excerpt']) ? 0 : 1) : (int)$current['include_excerpt'];
 		$out['include_url'] = array_key_exists('include_url', $value) ? (empty($value['include_url']) ? 0 : 1) : (int)$current['include_url'];
+		if (array_key_exists('content_order', $value)) {
+			$out['content_order'] = self::normalize_content_order((string)$value['content_order']);
+		} else {
+			$out['content_order'] = self::normalize_content_order((string)$current['content_order']);
+		}
 
 		$out['use_wp_shortlink'] = array_key_exists('use_wp_shortlink', $value) ? (empty($value['use_wp_shortlink']) ? 0 : 1) : (int)$current['use_wp_shortlink'];
 		$out['share_on_update'] = array_key_exists('share_on_update', $value) ? (empty($value['share_on_update']) ? 0 : 1) : (int)$current['share_on_update'];
@@ -678,6 +684,13 @@ final class PKLIAP_Plugin {
 									<label style="display:block;margin:2px 0 10px;">
 										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_url]" value="1" <?php checked(1, (int)$opt['include_url']); ?>/>
 										Inclure l’URL
+									</label>
+									<label>Ordre du contenu<br/>
+										<select name="<?php echo esc_attr(self::OPT_KEY); ?>[content_order]">
+											<option value="title,excerpt,url" <?php selected('title,excerpt,url', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → Extrait → URL (actuel)</option>
+											<option value="title,url,excerpt" <?php selected('title,url,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → URL → Extrait</option>
+											<option value="url,title,excerpt" <?php selected('url,title,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>URL → Titre → Extrait</option>
+										</select>
 									</label>
 									<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label><br/>
 									<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
@@ -1297,21 +1310,44 @@ final class PKLIAP_Plugin {
 		if ($opt['prefix']) {
 			$parts[] = $opt['prefix'];
 		}
-		if (!empty($opt['include_title'])) {
-			$parts[] = $title;
+
+		$ordered = self::normalize_content_order((string)($opt['content_order'] ?? 'title,excerpt,url'));
+		$order = array_filter(array_map('trim', explode(',', $ordered)), static fn($v) => $v !== '');
+		foreach ($order as $token) {
+			if ($token === 'title' && !empty($opt['include_title']) && $title !== '') {
+				$parts[] = $title;
+			}
+			if ($token === 'excerpt' && !empty($opt['include_excerpt']) && $excerpt !== '') {
+				$parts[] = $excerpt;
+			}
+			if ($token === 'url' && !empty($opt['include_url']) && $link !== '') {
+				$parts[] = $link;
+			}
 		}
-		if (!empty($opt['include_excerpt']) && $excerpt) {
-			$parts[] = $excerpt;
-		}
-		if (!empty($opt['include_url'])) {
-			$parts[] = $link;
-		}
+
 		if ($opt['suffix']) {
 			$parts[] = $opt['suffix'];
 		}
 
 		$text = trim(implode("\n\n", array_filter($parts, static fn($p) => (string)$p !== '')));
 		return self::mb_truncate($text, 2800);
+	}
+
+	private static function normalize_content_order(string $raw): string {
+		$allowed = ['title', 'excerpt', 'url'];
+		$tokens = array_filter(array_map(static fn($v) => strtolower(trim((string)$v)), explode(',', $raw)), static fn($v) => in_array($v, $allowed, true));
+		$unique = [];
+		foreach ($tokens as $token) {
+			if (!in_array($token, $unique, true)) {
+				$unique[] = $token;
+			}
+		}
+		foreach ($allowed as $token) {
+			if (!in_array($token, $unique, true)) {
+				$unique[] = $token;
+			}
+		}
+		return implode(',', $unique);
 	}
 
 	private static function safe_excerpt(int $post_id, int $max_len): string {
