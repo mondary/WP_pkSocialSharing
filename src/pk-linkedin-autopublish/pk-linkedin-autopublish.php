@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.29
+ * Version: 0.30
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -1449,28 +1449,40 @@ final class PKLIAP_Plugin {
 
 	/** @return array|WP_Error */
 	private static function linkedin_api_post_versioned(string $path, array $payload, string $access_token, string $linkedin_version) {
-		$version_header = self::linkedin_version_header($linkedin_version);
-		$res = self::linkedin_api_post($path, $payload, $access_token, [
-			'Linkedin-Version' => $version_header,
-			'X-Restli-Protocol-Version' => '2.0.0',
-		]);
+		$version = self::linkedin_version_header($linkedin_version);
+		$last_res = null;
 
-		if (is_wp_error($res) && $res->get_error_code() === 'pkliap_api_error' && strpos($res->get_error_message(), 'HTTP 426') !== false) {
-			$prev = self::linkedin_prev_month_version($version_header);
-			if ($prev) {
-				$res = self::linkedin_api_post($path, $payload, $access_token, [
-					'Linkedin-Version' => $prev,
-					'X-Restli-Protocol-Version' => '2.0.0',
-				]);
-				if (!is_wp_error($res)) {
+		// LinkedIn active parfois les versions avec décalage.
+		// On tente la version configurée puis jusqu'à 6 mois en arrière en cas de HTTP 426.
+		for ($i = 0; $i < 7; $i++) {
+			if (!$version) {
+				break;
+			}
+
+			$res = self::linkedin_api_post($path, $payload, $access_token, [
+				'Linkedin-Version' => $version,
+				'X-Restli-Protocol-Version' => '2.0.0',
+			]);
+			$last_res = $res;
+
+			if (!is_wp_error($res)) {
+				if ($version !== self::linkedin_version_header($linkedin_version)) {
 					self::update_options([
-						'linkedin_version' => substr($prev, 0, 6),
+						'linkedin_version' => substr($version, 0, 6),
 					]);
 				}
+				return $res;
 			}
+
+			$is_426 = $res->get_error_code() === 'pkliap_api_error' && strpos($res->get_error_message(), 'HTTP 426') !== false;
+			if (!$is_426) {
+				return $res;
+			}
+
+			$version = self::linkedin_prev_month_version($version);
 		}
 
-		return $res;
+		return $last_res instanceof WP_Error ? $last_res : new WP_Error('pkliap_api_error', 'Erreur API LinkedIn : aucune version active trouvée.');
 	}
 
 	/** @return array|WP_Error */
