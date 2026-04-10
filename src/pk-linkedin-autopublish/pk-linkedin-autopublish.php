@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.42
+ * Version: 0.43
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -742,14 +742,7 @@ final class PKLIAP_Plugin {
 												<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_url]" value="1" <?php checked(1, (int)$opt['include_url']); ?>/>
 												Inclure l’URL
 											</label>
-											<p class="pks-subtitle" style="margin-top:12px;">Ordre & Personnalisation</p>
-											<label>Ordre du contenu<br/>
-												<select name="<?php echo esc_attr(self::OPT_KEY); ?>[content_order]">
-													<option value="title,excerpt,url" <?php selected('title,excerpt,url', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → Extrait → URL (actuel)</option>
-													<option value="title,url,excerpt" <?php selected('title,url,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → URL → Extrait</option>
-													<option value="url,title,excerpt" <?php selected('url,title,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>URL → Titre → Extrait</option>
-												</select>
-											</label>
+											<p class="pks-subtitle" style="margin-top:12px;">Personnalisation</p>
 											<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label>
 											<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
 											<label>Template avancé (optionnel)<br/>
