@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.36
+ * Version: 0.38
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -213,6 +213,7 @@ final class PKLIAP_Plugin {
 			'include_excerpt' => 1,
 			'include_url' => 1,
 			'content_order' => 'title,excerpt,url',
+			'text_template' => '',
 			'use_wp_shortlink' => 1,
 			'post_type_whitelist' => ['post'],
 			'share_on_update' => 0,
@@ -334,6 +335,7 @@ final class PKLIAP_Plugin {
 		} else {
 			$out['content_order'] = self::normalize_content_order((string)$current['content_order']);
 		}
+		$out['text_template'] = array_key_exists('text_template', $value) ? sanitize_textarea_field((string)$value['text_template']) : (string)$current['text_template'];
 
 		$out['use_wp_shortlink'] = array_key_exists('use_wp_shortlink', $value) ? (empty($value['use_wp_shortlink']) ? 0 : 1) : (int)$current['use_wp_shortlink'];
 		$out['share_on_update'] = array_key_exists('share_on_update', $value) ? (empty($value['share_on_update']) ? 0 : 1) : (int)$current['share_on_update'];
@@ -470,25 +472,16 @@ final class PKLIAP_Plugin {
 				.pks-publication-table td{padding:10px 14px 14px}
 				.pks-publication-table label{display:block;margin:0 0 8px}
 				.pks-publication-table .pks-inline{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
-				.pks-publication-grid{display:grid;grid-template-columns:1fr;gap:12px}
+				.pks-publication-grid{display:flex;flex-direction:column;gap:12px}
 				.pks-text-grid{display:grid;grid-template-columns:1fr;gap:12px}
 				.pks-subbox{background:#fff;border:1px solid var(--pks-border);border-radius:8px;padding:10px}
 				.pks-subtitle{margin:0 0 8px;font-weight:600;font-size:12px;color:#111827}
 				.pks-subbox label{margin:0 0 6px}
-				@media (min-width: 760px){
-					.pks-publication-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-					.pks-publication-table tbody{display:contents}
-					.pks-publication-table tr{display:block;border-radius:10px}
-				}
-				@media (min-width: 1080px){
-					.pks-publication-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
-				}
-				@media (min-width: 1320px){
-					.pks-publication-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
-				}
-				@media (min-width: 1640px){
-					.pks-publication-grid{grid-template-columns:repeat(5,minmax(0,1fr))}
-				}
+				.pks-utm-grid{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px}
+				.pks-utm-field{display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px;align-items:center}
+				.pks-utm-field input{width:100%;max-width:none}
+				.pks-publication-table tbody{display:block}
+				.pks-publication-table tr{display:block;border-radius:10px}
 				@media (min-width: 1200px){
 					.pks-text-grid{grid-template-columns:1.1fr .9fr}
 				}
@@ -705,7 +698,20 @@ final class PKLIAP_Plugin {
 								<td>
 									<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[use_wp_shortlink]" value="1" <?php checked(1, (int)$opt['use_wp_shortlink']); ?>/> Utiliser le shortlink WP</label>
 									<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[append_utm]" value="1" <?php checked(1, (int)$opt['append_utm']); ?>/> Ajouter des UTM</label>
-									<p class="description">UTM: source <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_source]" value="<?php echo esc_attr($opt['utm_source']); ?>"/> medium <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_medium]" value="<?php echo esc_attr($opt['utm_medium']); ?>"/> campaign <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_campaign]" value="<?php echo esc_attr($opt['utm_campaign']); ?>"/></p>
+									<div class="pks-utm-grid">
+										<div class="pks-utm-field">
+											<label for="pkliap_utm_source">UTM source</label>
+											<input id="pkliap_utm_source" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_source]" value="<?php echo esc_attr($opt['utm_source']); ?>"/>
+										</div>
+										<div class="pks-utm-field">
+											<label for="pkliap_utm_medium">UTM medium</label>
+											<input id="pkliap_utm_medium" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_medium]" value="<?php echo esc_attr($opt['utm_medium']); ?>"/>
+										</div>
+										<div class="pks-utm-field">
+											<label for="pkliap_utm_campaign">UTM campaign</label>
+											<input id="pkliap_utm_campaign" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_campaign]" value="<?php echo esc_attr($opt['utm_campaign']); ?>"/>
+										</div>
+									</div>
 								</td>
 							</tr>
 							<tr>
@@ -738,6 +744,10 @@ final class PKLIAP_Plugin {
 											</label>
 											<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label>
 											<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
+											<label>Template avancé (optionnel)<br/>
+												<textarea class="large-text code" rows="4" name="<?php echo esc_attr(self::OPT_KEY); ?>[text_template]" placeholder="{title}\n\n{excerpt}\n\n{url}"><?php echo esc_textarea((string)$opt['text_template']); ?></textarea>
+											</label>
+											<p class="description" style="margin:4px 0 0;">Variables: <code>{prefix}</code>, <code>{title}</code>, <code>{excerpt}</code>, <code>{url}</code>, <code>{suffix}</code>. Si rempli, ce template remplace l’ordre standard.</p>
 										</div>
 									</div>
 								</td>
@@ -1361,6 +1371,20 @@ final class PKLIAP_Plugin {
 	private static function build_linkedin_text(int $post_id, array $opt, string $link): string {
 		$title = wp_strip_all_tags(get_the_title($post_id));
 		$excerpt = self::safe_excerpt($post_id, 260);
+		$template = (string)($opt['text_template'] ?? '');
+
+		if (trim($template) !== '') {
+			$tokens = [
+				'{prefix}' => (string)$opt['prefix'],
+				'{title}' => !empty($opt['include_title']) ? $title : '',
+				'{excerpt}' => !empty($opt['include_excerpt']) ? $excerpt : '',
+				'{url}' => !empty($opt['include_url']) ? $link : '',
+				'{suffix}' => (string)$opt['suffix'],
+			];
+			$text = strtr(str_replace(["\r\n", "\r"], "\n", $template), $tokens);
+			$text = preg_replace("/[ \t]+\n/", "\n", $text) ?? $text;
+			return self::mb_truncate(trim($text), 2800);
+		}
 
 		$parts = [];
 		if ($opt['prefix']) {
