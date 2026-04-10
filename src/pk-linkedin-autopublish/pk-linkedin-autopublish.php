@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.45
+ * Version: 0.46
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -20,6 +20,8 @@ final class PKLIAP_Plugin {
 	const OPT_REFRESH_EXP = 'pkliap_refresh_token_expires_at';
 	const META_SHARED_AT = '_pkliap_shared_at';
 	const META_SHARE_URN = '_pkliap_linkedin_urn';
+	const META_X_SHARED_AT = '_pkliap_x_shared_at';
+	const META_X_POST_ID = '_pkliap_x_post_id';
 	const SYNC_NAMESPACE = 'pksocialsharing/v1';
 	const SYNC_SLUG = 'pk-linkedin-autopublish';
 
@@ -33,6 +35,9 @@ final class PKLIAP_Plugin {
 		add_action('admin_post_pkliap_disconnect', [__CLASS__, 'handle_disconnect']);
 		add_action('admin_post_pkliap_test_post', [__CLASS__, 'handle_test_post']);
 		add_action('admin_post_pkliap_detect_author', [__CLASS__, 'handle_detect_author']);
+		add_action('admin_post_pkliap_x_connect', [__CLASS__, 'handle_x_connect']);
+		add_action('admin_post_pkliap_x_oauth_callback', [__CLASS__, 'handle_x_oauth_callback']);
+		add_action('admin_post_pkliap_x_disconnect', [__CLASS__, 'handle_x_disconnect']);
 
 		add_action('transition_post_status', [__CLASS__, 'on_transition_post_status'], 10, 3);
 	}
@@ -236,6 +241,15 @@ final class PKLIAP_Plugin {
 			'last_oauth_at' => 0,
 			'last_oauth_token_len' => 0,
 			'last_oauth_error' => '',
+			'x_enabled' => 0,
+			'x_api_key' => '',
+			'x_api_secret' => '',
+			'x_access_token' => '',
+			'x_access_token_secret' => '',
+			'x_user_id' => '',
+			'x_screen_name' => '',
+			'last_x_error' => '',
+			'last_x_error_at' => 0,
 		];
 	}
 
@@ -348,6 +362,13 @@ final class PKLIAP_Plugin {
 		$out['utm_campaign'] = array_key_exists('utm_campaign', $value) ? sanitize_text_field((string)$value['utm_campaign']) : (string)$current['utm_campaign'];
 
 		$out['log_enabled'] = array_key_exists('log_enabled', $value) ? (empty($value['log_enabled']) ? 0 : 1) : (int)$current['log_enabled'];
+		$out['x_enabled'] = array_key_exists('x_enabled', $value) ? (empty($value['x_enabled']) ? 0 : 1) : (int)$current['x_enabled'];
+		$out['x_api_key'] = array_key_exists('x_api_key', $value) ? sanitize_text_field((string)$value['x_api_key']) : (string)$current['x_api_key'];
+		$out['x_api_secret'] = array_key_exists('x_api_secret', $value) ? sanitize_text_field((string)$value['x_api_secret']) : (string)$current['x_api_secret'];
+		$out['x_access_token'] = array_key_exists('x_access_token', $value) ? sanitize_text_field((string)$value['x_access_token']) : (string)$current['x_access_token'];
+		$out['x_access_token_secret'] = array_key_exists('x_access_token_secret', $value) ? sanitize_text_field((string)$value['x_access_token_secret']) : (string)$current['x_access_token_secret'];
+		$out['x_user_id'] = array_key_exists('x_user_id', $value) ? sanitize_text_field((string)$value['x_user_id']) : (string)$current['x_user_id'];
+		$out['x_screen_name'] = array_key_exists('x_screen_name', $value) ? sanitize_text_field((string)$value['x_screen_name']) : (string)$current['x_screen_name'];
 		$out['require_image'] = array_key_exists('require_image', $value) ? (empty($value['require_image']) ? 0 : 1) : (int)$current['require_image'];
 		if (array_key_exists('media_mode', $value)) {
 			$out['media_mode'] = in_array((string)$value['media_mode'], ['opengraph', 'upload'], true) ? (string)$value['media_mode'] : $defaults['media_mode'];
@@ -373,6 +394,8 @@ final class PKLIAP_Plugin {
 			'last_oauth_at',
 			'last_oauth_token_len',
 			'last_oauth_error',
+			'last_x_error',
+			'last_x_error_at',
 		] as $k) {
 			$out[$k] = $current[$k];
 		}
@@ -418,6 +441,8 @@ final class PKLIAP_Plugin {
 		$link_tab_linkedin = remove_query_arg('network', $settings_base_url);
 		$link_tab_x = add_query_arg('network', 'x', $settings_base_url);
 		$link_tab_instagram = add_query_arg('network', 'instagram', $settings_base_url);
+		$x_callback_uri = self::admin_url_action('pkliap_x_oauth_callback');
+		$x_connected = (!empty($opt['x_access_token']) && !empty($opt['x_access_token_secret']));
 
 		?>
 		<div class="wrap">
@@ -539,17 +564,132 @@ final class PKLIAP_Plugin {
 
 				<?php if ($active_network === 'x'): ?>
 					<div class="pks-grid">
-						<div class="pks-card pks-card--accent-blue pks-card--wide">
-							<div class="pks-card-title">X (Twitter) — Préparation V2</div>
-							<p class="pks-info" style="margin:0 0 10px;">
-								La base multi-réseaux est en place. L’intégration API X n’est pas encore active dans cette version.
-							</p>
-							<p class="pks-info" style="margin:0 0 10px;">
-								Objectif de la prochaine étape: OAuth X, publication texte/lien/image, statuts et bouton “Publier maintenant” comme LinkedIn.
-							</p>
-							<p class="pks-info" style="margin:0;">
-								Référence fournie: <a href="https://plugins.trac.wordpress.org/browser/autoshare-for-twitter/" target="_blank" rel="noopener">autoshare-for-twitter (WordPress Trac)</a>.
-							</p>
+						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
+							<div class="pks-card-title">X Developer (App)</div>
+							<?php settings_fields('pkliap'); ?>
+							<table class="form-table" role="presentation">
+								<tr>
+									<th scope="row">API Key</th>
+									<td>
+										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_api_key]" value="<?php echo esc_attr((string)$opt['x_api_key']); ?>"/>
+									</td>
+								</tr>
+								<tr>
+									<th scope="row">API Key Secret</th>
+									<td>
+										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_api_secret]" value="<?php echo esc_attr((string)$opt['x_api_secret']); ?>"/>
+									</td>
+								</tr>
+								<tr>
+									<th scope="row">Callback URL</th>
+									<td>
+										<input class="regular-text" type="text" readonly value="<?php echo esc_attr($x_callback_uri); ?>"/>
+										<p class="description">À configurer dans ton app X OAuth 1.0a user context.</p>
+									</td>
+								</tr>
+							</table>
+							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+						</form>
+
+						<div class="pks-card pks-card--accent-purple">
+							<div class="pks-card-title">Compte X (qui poste)</div>
+							<div class="pks-actions-row" style="margin:-6px 0 12px;">
+								<?php echo $x_connected ? '<span class="pks-pill pks-pill--ok">Connecté</span>' : '<span class="pks-pill pks-pill--bad">Non connecté</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<?php if (!empty($opt['x_screen_name'])): ?>
+									<span class="pks-pill pks-pill--ok">@<?php echo esc_html((string)$opt['x_screen_name']); ?></span>
+								<?php endif; ?>
+							</div>
+							<div class="pks-actions-row" style="margin:0 0 12px;">
+								<a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_x_connect'), 'pkliap_x_connect')); ?>">Connecter / Reconnecter</a>
+								<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_x_disconnect'), 'pkliap_x_disconnect')); ?>">Déconnecter</a>
+							</div>
+							<?php if (!empty($opt['last_x_error'])): ?>
+								<p class="description" style="color:#b32d2e;">
+									Dernière erreur X: <?php echo esc_html((string)$opt['last_x_error']); ?>
+									<?php if (!empty($opt['last_x_error_at'])): ?>
+										<br/>Le <?php echo esc_html(wp_date('Y-m-d H:i', (int)$opt['last_x_error_at'])); ?>
+									<?php endif; ?>
+								</p>
+							<?php endif; ?>
+							<table class="form-table" role="presentation">
+								<tr>
+									<th scope="row">User ID</th>
+									<td><input class="regular-text" type="text" readonly value="<?php echo esc_attr((string)$opt['x_user_id']); ?>"/></td>
+								</tr>
+								<tr>
+									<th scope="row">Screen Name</th>
+									<td><input class="regular-text" type="text" readonly value="<?php echo esc_attr((string)$opt['x_screen_name']); ?>"/></td>
+								</tr>
+							</table>
+						</div>
+
+						<form method="post" action="options.php" class="pks-card pks-card--accent-ok pks-card--wide">
+							<div class="pks-card-title">Publication X</div>
+							<?php settings_fields('pkliap'); ?>
+							<div class="pks-checkrow">
+								<span class="pks-pill pks-pill--ok">AUTO</span>
+								<div>
+									<strong>Activer</strong>
+									<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_enabled]" value="1" <?php checked(1, (int)$opt['x_enabled']); ?>/> Publier automatiquement sur X</label>
+									<p>Le texte utilise les réglages globaux: Préfixe / Suffixe / Template avancé.</p>
+								</div>
+							</div>
+							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+						</form>
+
+						<div class="pks-card pks-card--wide">
+							<div class="pks-card-title">Test X</div>
+							<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié pour tenter un partage X.</p>
+							<?php
+							$posts = get_posts([
+								'post_type' => $opt['post_type_whitelist'],
+								'post_status' => 'publish',
+								'numberposts' => 20,
+								'orderby' => 'date',
+								'order' => 'DESC',
+							]);
+							?>
+							<table class="widefat striped" style="width:100%;">
+								<thead>
+									<tr>
+										<th style="width:60px;">ID</th>
+										<th style="width:64px;">Image</th>
+										<th>Article</th>
+										<th style="width:220px;">Statut X</th>
+										<th style="width:180px;">Action</th>
+									</tr>
+								</thead>
+								<tbody>
+								<?php if (!$posts): ?>
+									<tr><td colspan="5">Aucun article publié trouvé.</td></tr>
+								<?php else: ?>
+									<?php foreach ($posts as $p): ?>
+										<?php
+										$x_shared_at = (int)get_post_meta($p->ID, self::META_X_SHARED_AT, true);
+										$x_post_id = (string)get_post_meta($p->ID, self::META_X_POST_ID, true);
+										$x_post_url = $x_post_id ? ('https://x.com/i/web/status/' . rawurlencode($x_post_id)) : '';
+										$x_status = $x_shared_at ? ('Partagé le ' . esc_html(wp_date('Y-m-d H:i', $x_shared_at)) . ($x_post_id ? '<br/><code style="font-size:11px;">' . esc_html($x_post_id) . '</code>' : '') . ($x_post_url ? '<br/><a href="' . esc_url($x_post_url) . '" target="_blank" rel="noopener">Voir sur X</a>' : '')) : 'Jamais partagé';
+										$x_action_url = wp_nonce_url(self::admin_url_action('pkliap_test_post') . '&post_id=' . (int)$p->ID . '&network=x', 'pkliap_test_post_' . (int)$p->ID);
+										$edit_url = get_edit_post_link($p->ID, '');
+										$thumb_html = get_the_post_thumbnail($p->ID, [48, 48], ['style' => 'width:48px;height:48px;object-fit:cover;border-radius:4px;']);
+										?>
+										<tr>
+											<td><?php echo (int)$p->ID; ?></td>
+											<td><?php echo $thumb_html ?: '<span style="opacity:.6;">—</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											<td>
+												<strong><?php echo esc_html($p->post_title ?: '(Sans titre)'); ?></strong>
+												<div class="row-actions">
+													<span><a href="<?php echo esc_url(get_permalink($p->ID)); ?>" target="_blank" rel="noopener">Voir</a> | </span>
+													<span><a href="<?php echo esc_url($edit_url ?: '#'); ?>">Modifier</a></span>
+												</div>
+											</td>
+											<td><?php echo $x_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											<td><a class="button button-secondary" href="<?php echo esc_url($x_action_url); ?>">Publier maintenant</a></td>
+										</tr>
+									<?php endforeach; ?>
+								<?php endif; ?>
+								</tbody>
+							</table>
 						</div>
 					</div>
 				<?php elseif ($active_network === 'instagram'): ?>
@@ -1168,20 +1308,136 @@ final class PKLIAP_Plugin {
 		exit;
 	}
 
+	public static function handle_x_connect(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_x_connect');
+
+		$opt = self::get_options();
+		if (empty($opt['x_api_key']) || empty($opt['x_api_secret'])) {
+			self::set_flash('error', 'Renseignez API Key / API Key Secret X avant de connecter.');
+			wp_safe_redirect(self::settings_url(['network' => 'x']));
+			exit;
+		}
+
+		$request_token_res = self::x_request_token((string)$opt['x_api_key'], (string)$opt['x_api_secret'], self::admin_url_action('pkliap_x_oauth_callback'));
+		if (is_wp_error($request_token_res)) {
+			self::update_options([
+				'last_x_error' => $request_token_res->get_error_message(),
+				'last_x_error_at' => time(),
+			]);
+			self::set_flash('error', $request_token_res->get_error_message());
+			wp_safe_redirect(self::settings_url(['network' => 'x']));
+			exit;
+		}
+
+		$oauth_token = (string)($request_token_res['oauth_token'] ?? '');
+		$oauth_token_secret = (string)($request_token_res['oauth_token_secret'] ?? '');
+		if ($oauth_token === '' || $oauth_token_secret === '') {
+			self::set_flash('error', 'X OAuth: réponse request_token invalide.');
+			wp_safe_redirect(self::settings_url(['network' => 'x']));
+			exit;
+		}
+
+		$user_id = get_current_user_id();
+		set_transient('pkliap_x_req_' . $user_id . '_' . md5($oauth_token), $oauth_token_secret, 10 * MINUTE_IN_SECONDS);
+		wp_redirect('https://api.x.com/oauth/authenticate?oauth_token=' . rawurlencode($oauth_token));
+		exit;
+	}
+
+	public static function handle_x_oauth_callback(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+
+		$oauth_token = isset($_GET['oauth_token']) ? sanitize_text_field((string)wp_unslash($_GET['oauth_token'])) : '';
+		$oauth_verifier = isset($_GET['oauth_verifier']) ? sanitize_text_field((string)wp_unslash($_GET['oauth_verifier'])) : '';
+		if ($oauth_token === '' || $oauth_verifier === '') {
+			self::set_flash('error', 'X OAuth: callback incomplet.');
+			wp_safe_redirect(self::settings_url(['network' => 'x']));
+			exit;
+		}
+
+		$user_id = get_current_user_id();
+		$request_token_secret = (string)get_transient('pkliap_x_req_' . $user_id . '_' . md5($oauth_token));
+		delete_transient('pkliap_x_req_' . $user_id . '_' . md5($oauth_token));
+		if ($request_token_secret === '') {
+			self::set_flash('error', 'X OAuth: session expirée, reconnecte.');
+			wp_safe_redirect(self::settings_url(['network' => 'x']));
+			exit;
+		}
+
+		$opt = self::get_options();
+		$access_res = self::x_access_token(
+			(string)$opt['x_api_key'],
+			(string)$opt['x_api_secret'],
+			$oauth_token,
+			$request_token_secret,
+			$oauth_verifier
+		);
+		if (is_wp_error($access_res)) {
+			self::update_options([
+				'last_x_error' => $access_res->get_error_message(),
+				'last_x_error_at' => time(),
+			]);
+			self::set_flash('error', $access_res->get_error_message());
+			wp_safe_redirect(self::settings_url(['network' => 'x']));
+			exit;
+		}
+
+		self::update_options([
+			'x_access_token' => (string)($access_res['oauth_token'] ?? ''),
+			'x_access_token_secret' => (string)($access_res['oauth_token_secret'] ?? ''),
+			'x_user_id' => (string)($access_res['user_id'] ?? ''),
+			'x_screen_name' => (string)($access_res['screen_name'] ?? ''),
+			'last_x_error' => '',
+			'last_x_error_at' => 0,
+		]);
+		self::set_flash('notice', 'Connecté à X.');
+		wp_safe_redirect(self::settings_url(['network' => 'x']));
+		exit;
+	}
+
+	public static function handle_x_disconnect(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_x_disconnect');
+
+		self::update_options([
+			'x_access_token' => '',
+			'x_access_token_secret' => '',
+			'x_user_id' => '',
+			'x_screen_name' => '',
+			'last_x_error' => '',
+			'last_x_error_at' => 0,
+		]);
+		self::set_flash('notice', 'Déconnecté de X.');
+		wp_safe_redirect(self::settings_url(['network' => 'x']));
+		exit;
+	}
+
 	public static function handle_test_post(): void {
 		if (!current_user_can('manage_options')) {
 			wp_die('Forbidden');
 		}
 		$post_id = isset($_REQUEST['post_id']) ? (int)$_REQUEST['post_id'] : 0;
+		$network = isset($_REQUEST['network']) ? sanitize_key((string)wp_unslash($_REQUEST['network'])) : 'linkedin';
+		if (!in_array($network, ['linkedin', 'x'], true)) {
+			$network = 'linkedin';
+		}
 		if (!$post_id) {
 			self::set_flash('error', 'post_id manquant.');
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => $network]));
 			exit;
 		}
 		check_admin_referer('pkliap_test_post_' . $post_id);
 
 		try {
-			$res = self::share_post_to_linkedin($post_id, true);
+			$res = ($network === 'x')
+				? self::share_post_to_x($post_id, true)
+				: self::share_post_to_linkedin($post_id, true);
 		} catch (Throwable $e) {
 			$msg = 'Exception PHP: ' . get_class($e) . ' - ' . $e->getMessage();
 			self::update_options([
@@ -1191,7 +1447,7 @@ final class PKLIAP_Plugin {
 			self::debug_log_event($msg);
 			self::debug_log_event($e->getTraceAsString());
 			self::set_flash('error', $msg);
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => $network]));
 			exit;
 		}
 		if (is_wp_error($res)) {
@@ -1199,9 +1455,9 @@ final class PKLIAP_Plugin {
 				'last_share_error' => $res->get_error_message(),
 				'last_share_error_at' => time(),
 			]);
-			self::debug_log_event('Test share failed for post #' . $post_id . ': ' . $res->get_error_message());
+			self::debug_log_event('Test share ' . strtoupper($network) . ' failed for post #' . $post_id . ': ' . $res->get_error_message());
 			self::set_flash('error', $res->get_error_message());
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => $network]));
 			exit;
 		}
 
@@ -1209,14 +1465,14 @@ final class PKLIAP_Plugin {
 			'last_share_error' => '',
 			'last_share_error_at' => 0,
 		]);
-		$notice = 'Post LinkedIn envoyé.';
+		$notice = ($network === 'x') ? 'Post X envoyé.' : 'Post LinkedIn envoyé.';
 		if (is_array($res) && !empty($res['warning'])) {
 			$notice .= ' ' . (string)$res['warning'];
-			self::debug_log_event('Test share warning for post #' . $post_id . ': ' . (string)$res['warning']);
+			self::debug_log_event('Test share ' . strtoupper($network) . ' warning for post #' . $post_id . ': ' . (string)$res['warning']);
 		}
-		self::debug_log_event('Test share success for post #' . $post_id . '.');
+		self::debug_log_event('Test share ' . strtoupper($network) . ' success for post #' . $post_id . '.');
 		self::set_flash('notice', $notice);
-		wp_safe_redirect(self::settings_url());
+		wp_safe_redirect(self::settings_url(['network' => $network]));
 		exit;
 	}
 
@@ -1226,7 +1482,7 @@ final class PKLIAP_Plugin {
 		}
 
 		$opt = self::get_options();
-		if (empty($opt['enabled'])) {
+		if (empty($opt['enabled']) && empty($opt['x_enabled'])) {
 			return;
 		}
 
@@ -1239,38 +1495,66 @@ final class PKLIAP_Plugin {
 			return;
 		}
 
-		if (!empty($opt['only_once']) && get_post_meta($post->ID, self::META_SHARED_AT, true) && empty($opt['share_on_update'])) {
+		$linkedin_already = !empty(get_post_meta($post->ID, self::META_SHARED_AT, true));
+		$x_already = !empty(get_post_meta($post->ID, self::META_X_SHARED_AT, true));
+		if (!empty($opt['only_once']) && $linkedin_already && $x_already && empty($opt['share_on_update'])) {
 			return;
 		}
 
-		// Éviter de bloquer la publication : on fait une tentative mais on ne stoppe pas WP.
-		try {
-			$res = self::share_post_to_linkedin($post->ID, false);
-		} catch (Throwable $e) {
-			$msg = 'Exception PHP: ' . get_class($e) . ' - ' . $e->getMessage();
-			self::update_options([
-				'last_share_error' => $msg,
-				'last_share_error_at' => time(),
-			]);
-			self::debug_log_event($msg);
-			self::debug_log_event($e->getTraceAsString());
-			return;
-		}
-		if (is_wp_error($res)) {
-			self::update_options([
-				'last_share_error' => $res->get_error_message(),
-				'last_share_error_at' => time(),
-			]);
-			self::debug_log_event('Auto share failed for post #' . $post->ID . ': ' . $res->get_error_message());
-		} else {
-			self::update_options([
-				'last_share_error' => '',
-				'last_share_error_at' => 0,
-			]);
-			if (is_array($res) && !empty($res['warning'])) {
-				self::debug_log_event('Auto share warning for post #' . $post->ID . ': ' . (string)$res['warning']);
+		if (!empty($opt['enabled'])) {
+			try {
+				$res = self::share_post_to_linkedin($post->ID, false);
+			} catch (Throwable $e) {
+				$msg = 'Exception PHP LinkedIn: ' . get_class($e) . ' - ' . $e->getMessage();
+				self::update_options([
+					'last_share_error' => $msg,
+					'last_share_error_at' => time(),
+				]);
+				self::debug_log_event($msg);
+				self::debug_log_event($e->getTraceAsString());
+				$res = new WP_Error('pkliap_exception', $msg);
 			}
-			self::debug_log_event('Auto share success for post #' . $post->ID . '.');
+			if (is_wp_error($res)) {
+				self::update_options([
+					'last_share_error' => $res->get_error_message(),
+					'last_share_error_at' => time(),
+				]);
+				self::debug_log_event('Auto share LinkedIn failed for post #' . $post->ID . ': ' . $res->get_error_message());
+			} else {
+				self::update_options([
+					'last_share_error' => '',
+					'last_share_error_at' => 0,
+				]);
+				self::debug_log_event('Auto share LinkedIn success for post #' . $post->ID . '.');
+			}
+		}
+
+		if (!empty($opt['x_enabled'])) {
+			try {
+				$xres = self::share_post_to_x($post->ID, false);
+			} catch (Throwable $e) {
+				$msg = 'Exception PHP X: ' . get_class($e) . ' - ' . $e->getMessage();
+				self::update_options([
+					'last_x_error' => $msg,
+					'last_x_error_at' => time(),
+				]);
+				self::debug_log_event($msg);
+				self::debug_log_event($e->getTraceAsString());
+				$xres = new WP_Error('pkliap_exception_x', $msg);
+			}
+			if (is_wp_error($xres)) {
+				self::update_options([
+					'last_x_error' => $xres->get_error_message(),
+					'last_x_error_at' => time(),
+				]);
+				self::debug_log_event('Auto share X failed for post #' . $post->ID . ': ' . $xres->get_error_message());
+			} else {
+				self::update_options([
+					'last_x_error' => '',
+					'last_x_error_at' => 0,
+				]);
+				self::debug_log_event('Auto share X success for post #' . $post->ID . '.');
+			}
 		}
 	}
 
@@ -1417,6 +1701,49 @@ final class PKLIAP_Plugin {
 		];
 	}
 
+	/** @return array|WP_Error */
+	private static function share_post_to_x(int $post_id, bool $force) {
+		$post = get_post($post_id);
+		if (!$post || $post->post_status !== 'publish') {
+			return new WP_Error('pkliap_invalid_post', 'Article non publié.');
+		}
+
+		$opt = self::get_options();
+		if (empty($opt['x_enabled']) && !$force) {
+			return ['skipped' => true];
+		}
+		if (empty($opt['x_api_key']) || empty($opt['x_api_secret'])) {
+			return new WP_Error('pkliap_x_no_app', 'X: API Key / API Key Secret manquants.');
+		}
+		if (empty($opt['x_access_token']) || empty($opt['x_access_token_secret'])) {
+			return new WP_Error('pkliap_x_no_token', 'X: compte non connecté.');
+		}
+
+		if (!$force && !empty($opt['only_once'])) {
+			$already = get_post_meta($post_id, self::META_X_SHARED_AT, true);
+			if ($already && empty($opt['share_on_update'])) {
+				return ['skipped' => true];
+			}
+		}
+
+		$link = self::get_post_link($post_id, $opt);
+		$text = self::build_x_text($post_id, $opt, $link);
+		$publish_res = self::x_create_tweet($text, $opt);
+		if (is_wp_error($publish_res)) {
+			return $publish_res;
+		}
+
+		$x_post_id = (string)($publish_res['data']['id'] ?? '');
+		update_post_meta($post_id, self::META_X_SHARED_AT, time());
+		if ($x_post_id !== '') {
+			update_post_meta($post_id, self::META_X_POST_ID, $x_post_id);
+		}
+
+		return [
+			'post_id' => $x_post_id,
+		];
+	}
+
 	private static function settings_url(array $args = []): string {
 		$url = admin_url('admin.php?page=pk-socialsharing');
 		if ($args) {
@@ -1497,6 +1824,10 @@ final class PKLIAP_Plugin {
 
 		$text = trim(implode("\n\n", array_filter($parts, static fn($p) => (string)$p !== '')));
 		return self::mb_truncate($text, 2800);
+	}
+
+	private static function build_x_text(int $post_id, array $opt, string $link): string {
+		return self::mb_truncate(self::build_linkedin_text($post_id, $opt, $link), 280);
 	}
 
 	private static function normalize_content_order(string $raw): string {
@@ -1750,6 +2081,211 @@ final class PKLIAP_Plugin {
 		}
 		// Keep simple YYYYMM (most compatible).
 		return sprintf('%04d%02d', $y, $mo);
+	}
+
+	/** @return array|WP_Error */
+	private static function x_request_token(string $consumer_key, string $consumer_secret, string $callback_url) {
+		$res = self::x_api_request(
+			'POST',
+			'https://api.x.com/oauth/request_token',
+			$consumer_key,
+			$consumer_secret,
+			'',
+			'',
+			['oauth_callback' => $callback_url]
+		);
+		if (is_wp_error($res)) {
+			return $res;
+		}
+		parse_str((string)($res['raw_body'] ?? ''), $data);
+		if (!is_array($data) || empty($data['oauth_token']) || empty($data['oauth_token_secret'])) {
+			return new WP_Error('pkliap_x_oauth', 'X OAuth: réponse request_token invalide.');
+		}
+		return $data;
+	}
+
+	/** @return array|WP_Error */
+	private static function x_access_token(string $consumer_key, string $consumer_secret, string $request_token, string $request_token_secret, string $oauth_verifier) {
+		$res = self::x_api_request(
+			'POST',
+			'https://api.x.com/oauth/access_token',
+			$consumer_key,
+			$consumer_secret,
+			$request_token,
+			$request_token_secret,
+			['oauth_verifier' => $oauth_verifier]
+		);
+		if (is_wp_error($res)) {
+			return $res;
+		}
+		parse_str((string)($res['raw_body'] ?? ''), $data);
+		if (!is_array($data) || empty($data['oauth_token']) || empty($data['oauth_token_secret'])) {
+			return new WP_Error('pkliap_x_oauth', 'X OAuth: réponse access_token invalide.');
+		}
+		return $data;
+	}
+
+	/** @return array|WP_Error */
+	private static function x_create_tweet(string $text, array $opt) {
+		$payload = ['text' => $text];
+
+		$res = self::x_api_request(
+			'POST',
+			'https://api.x.com/2/tweets',
+			(string)$opt['x_api_key'],
+			(string)$opt['x_api_secret'],
+			(string)$opt['x_access_token'],
+			(string)$opt['x_access_token_secret'],
+			[],
+			$payload
+		);
+		if (!is_wp_error($res)) {
+			return is_array($res['body']) ? $res['body'] : [];
+		}
+
+		// Fallback hôte historique si le domaine api.x.com n'est pas accessible chez certains hébergeurs.
+		$res2 = self::x_api_request(
+			'POST',
+			'https://api.twitter.com/2/tweets',
+			(string)$opt['x_api_key'],
+			(string)$opt['x_api_secret'],
+			(string)$opt['x_access_token'],
+			(string)$opt['x_access_token_secret'],
+			[],
+			$payload
+		);
+		if (is_wp_error($res2)) {
+			return $res2;
+		}
+		return is_array($res2['body']) ? $res2['body'] : [];
+	}
+
+	private static function x_percent_encode(string $value): string {
+		return str_replace('%7E', '~', rawurlencode($value));
+	}
+
+	private static function x_random_nonce(int $len = 16): string {
+		try {
+			$bytes = random_bytes($len);
+			return bin2hex($bytes);
+		} catch (Throwable $e) {
+			return wp_generate_password($len * 2, false, false);
+		}
+	}
+
+	private static function x_build_oauth_signature(string $method, string $url, array $all_params, string $consumer_secret, string $token_secret): string {
+		$pairs = [];
+		foreach ($all_params as $k => $v) {
+			$k = (string)$k;
+			$vals = is_array($v) ? $v : [$v];
+			foreach ($vals as $vv) {
+				$pairs[] = [self::x_percent_encode($k), self::x_percent_encode((string)$vv)];
+			}
+		}
+		usort($pairs, static function (array $a, array $b): int {
+			$cmp = strcmp($a[0], $b[0]);
+			if ($cmp !== 0) {
+				return $cmp;
+			}
+			return strcmp($a[1], $b[1]);
+		});
+		$normalized = [];
+		foreach ($pairs as $p) {
+			$normalized[] = $p[0] . '=' . $p[1];
+		}
+
+		$parts = parse_url($url);
+		$scheme = isset($parts['scheme']) ? strtolower((string)$parts['scheme']) : 'https';
+		$host = isset($parts['host']) ? strtolower((string)$parts['host']) : '';
+		$path = isset($parts['path']) ? (string)$parts['path'] : '';
+		$normalized_url = $scheme . '://' . $host . $path;
+
+		$base_string = strtoupper($method) . '&' . self::x_percent_encode($normalized_url) . '&' . self::x_percent_encode(implode('&', $normalized));
+		$signing_key = self::x_percent_encode($consumer_secret) . '&' . self::x_percent_encode($token_secret);
+		return base64_encode(hash_hmac('sha1', $base_string, $signing_key, true));
+	}
+
+	/** @return array|WP_Error */
+	private static function x_api_request(
+		string $method,
+		string $url,
+		string $consumer_key,
+		string $consumer_secret,
+		string $token,
+		string $token_secret,
+		array $oauth_extra_params = [],
+		array $json_body = []
+	) {
+		$oauth_params = [
+			'oauth_consumer_key' => $consumer_key,
+			'oauth_nonce' => self::x_random_nonce(),
+			'oauth_signature_method' => 'HMAC-SHA1',
+			'oauth_timestamp' => (string)time(),
+			'oauth_version' => '1.0',
+		];
+		if ($token !== '') {
+			$oauth_params['oauth_token'] = $token;
+		}
+		foreach ($oauth_extra_params as $k => $v) {
+			$oauth_params[(string)$k] = (string)$v;
+		}
+
+		$query_params = [];
+		$parts = parse_url($url);
+		if (isset($parts['query'])) {
+			parse_str((string)$parts['query'], $query_params);
+		}
+
+		$signature_params = array_merge($query_params, $oauth_params);
+		$oauth_params['oauth_signature'] = self::x_build_oauth_signature($method, $url, $signature_params, $consumer_secret, $token_secret);
+
+		$header_parts = [];
+		$oauth_header = $oauth_params;
+		ksort($oauth_header);
+		foreach ($oauth_header as $k => $v) {
+			$header_parts[] = self::x_percent_encode((string)$k) . '="' . self::x_percent_encode((string)$v) . '"';
+		}
+
+		$args = [
+			'method' => strtoupper($method),
+			'timeout' => 45,
+			'headers' => [
+				'Authorization' => 'OAuth ' . implode(', ', $header_parts),
+				'Accept' => 'application/json',
+			],
+		];
+
+		if (!empty($json_body)) {
+			$args['headers']['Content-Type'] = 'application/json';
+			$args['body'] = wp_json_encode($json_body);
+		}
+
+		$res = wp_remote_request($url, $args);
+		if (is_wp_error($res)) {
+			return $res;
+		}
+
+		$code = (int)wp_remote_retrieve_response_code($res);
+		$raw_body = (string)wp_remote_retrieve_body($res);
+		$body = json_decode($raw_body, true);
+
+		if ($code < 200 || $code >= 300) {
+			$msg = 'Erreur API X (HTTP ' . $code . ').';
+			if (is_array($body) && !empty($body['detail'])) {
+				$msg .= ' ' . (string)$body['detail'];
+			} elseif (is_array($body) && !empty($body['title'])) {
+				$msg .= ' ' . (string)$body['title'];
+			} elseif ($raw_body !== '') {
+				$msg .= ' ' . self::mb_truncate(wp_strip_all_tags($raw_body), 280);
+			}
+			return new WP_Error('pkliap_x_api_error', $msg);
+		}
+
+		return [
+			'code' => $code,
+			'body' => is_array($body) ? $body : [],
+			'raw_body' => $raw_body,
+		];
 	}
 
 	private static function flash_key(): string {
