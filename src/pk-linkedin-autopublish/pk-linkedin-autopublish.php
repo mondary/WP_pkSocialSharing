@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.41
+ * Version: 0.42
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -462,6 +462,7 @@ final class PKLIAP_Plugin {
 				.pks-pill--warn{background:rgba(245,158,11,.16)}
 				.pks-pill--bad{background:rgba(239,68,68,.14)}
 				.pks-checksplit{display:grid;grid-template-columns:1fr;gap:10px}
+				.pks-publication-split{display:grid;grid-template-columns:1fr;gap:10px}
 				.pks-checklist{display:flex;flex-direction:column;gap:10px;margin:0}
 				.pks-checkrow{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--pks-border);border-radius:var(--pks-radius);background:var(--pks-bg)}
 				.pks-checkrow strong{display:block;font-size:13px}
@@ -489,6 +490,8 @@ final class PKLIAP_Plugin {
 				}
 				@media (min-width: 1080px){
 					.pks-checksplit{grid-template-columns:repeat(2,minmax(0,1fr))}
+					.pks-publication-split{grid-template-columns:repeat(3,minmax(0,1fr))}
+					.pks-publication-split > .pks-checklist{display:contents}
 				}
 			</style>
 
@@ -506,7 +509,7 @@ final class PKLIAP_Plugin {
 				<div class="pks-grid">
 					<div class="pks-card pks-card--accent-warn pks-card--wide">
 						<div class="pks-card-title">Connexion (pas-à-pas)</div>
-						<div class="pks-checksplit">
+						<div class="pks-checksplit pks-publication-split">
 							<div class="pks-checklist">
 								<div class="pks-checkrow">
 									<?php echo $has_client_id ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
