@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.38
+ * Version: 0.39
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -745,9 +745,9 @@ final class PKLIAP_Plugin {
 											<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label>
 											<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
 											<label>Template avancé (optionnel)<br/>
-												<textarea class="large-text code" rows="4" name="<?php echo esc_attr(self::OPT_KEY); ?>[text_template]" placeholder="{title}\n\n{excerpt}\n\n{url}"><?php echo esc_textarea((string)$opt['text_template']); ?></textarea>
+												<textarea class="large-text code" rows="4" name="<?php echo esc_attr(self::OPT_KEY); ?>[text_template]" placeholder="{url}{br}{title}{br2}{excerpt}"><?php echo esc_textarea((string)$opt['text_template']); ?></textarea>
 											</label>
-											<p class="description" style="margin:4px 0 0;">Variables: <code>{prefix}</code>, <code>{title}</code>, <code>{excerpt}</code>, <code>{url}</code>, <code>{suffix}</code>. Si rempli, ce template remplace l’ordre standard.</p>
+											<p class="description" style="margin:4px 0 0;">Variables: <code>{prefix}</code>, <code>{title}</code>, <code>{excerpt}</code>, <code>{url}</code>, <code>{suffix}</code>. Sauts: <code>{br}</code> = nouvelle ligne, <code>{br2}</code> = ligne vide. Compatibilité aussi avec <code>/n</code> et <code>/n/n</code>.</p>
 										</div>
 									</div>
 								</td>
@@ -1374,6 +1374,9 @@ final class PKLIAP_Plugin {
 		$template = (string)($opt['text_template'] ?? '');
 
 		if (trim($template) !== '') {
+			$normalized_template = str_replace(["\r\n", "\r"], "\n", $template);
+			$normalized_template = str_replace(['/n/n', '/n'], ["\n\n", "\n"], $normalized_template);
+			$normalized_template = str_replace(['{br2}', '{br}'], ["\n\n", "\n"], $normalized_template);
 			$tokens = [
 				'{prefix}' => (string)$opt['prefix'],
 				'{title}' => !empty($opt['include_title']) ? $title : '',
@@ -1381,7 +1384,7 @@ final class PKLIAP_Plugin {
 				'{url}' => !empty($opt['include_url']) ? $link : '',
 				'{suffix}' => (string)$opt['suffix'],
 			];
-			$text = strtr(str_replace(["\r\n", "\r"], "\n", $template), $tokens);
+			$text = strtr($normalized_template, $tokens);
 			$text = preg_replace("/[ \t]+\n/", "\n", $text) ?? $text;
 			return self::mb_truncate(trim($text), 2800);
 		}
