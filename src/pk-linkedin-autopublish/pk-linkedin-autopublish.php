@@ -509,7 +509,7 @@ final class PKLIAP_Plugin {
 				<div class="pks-grid">
 					<div class="pks-card pks-card--accent-warn pks-card--wide">
 						<div class="pks-card-title">Connexion (pas-à-pas)</div>
-						<div class="pks-checksplit pks-publication-split">
+						<div class="pks-checksplit">
 							<div class="pks-checklist">
 								<div class="pks-checkrow">
 									<?php echo $has_client_id ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
@@ -678,7 +678,7 @@ final class PKLIAP_Plugin {
 					<form method="post" action="options.php" class="pks-card pks-card--accent-ok pks-card--wide" id="pkliap_save_form_proxy">
 						<div class="pks-card-title">Publication</div>
 						<?php settings_fields('pkliap'); ?>
-						<div class="pks-checksplit">
+						<div class="pks-checksplit pks-publication-split">
 							<div class="pks-checklist">
 								<div class="pks-checkrow">
 									<span class="pks-pill pks-pill--ok">AUTO</span>
