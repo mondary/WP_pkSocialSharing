@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.40
+ * Version: 0.41
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -232,6 +232,7 @@ final class PKLIAP_Plugin {
 			'log_enabled' => 1,
 			'last_share_error' => '',
 			'last_share_error_at' => 0,
+			'debug_log' => [],
 			'last_oauth_at' => 0,
 			'last_oauth_token_len' => 0,
 			'last_oauth_error' => '',
@@ -368,6 +369,7 @@ final class PKLIAP_Plugin {
 			'last_assets_error_at',
 			'last_share_error',
 			'last_share_error_at',
+			'debug_log',
 			'last_oauth_at',
 			'last_oauth_token_len',
 			'last_oauth_error',
@@ -723,38 +725,34 @@ final class PKLIAP_Plugin {
 									<span class="pks-pill pks-pill--ok">TEXTE</span>
 									<div>
 										<strong>Texte</strong>
-										<div class="pks-text-grid">
-											<div class="pks-subbox">
-												<p class="pks-subtitle">Composition</p>
-												<label class="pks-inline">
-													<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_title]" value="1" <?php checked(1, (int)$opt['include_title']); ?>/>
-													Inclure le titre
-												</label>
-												<label class="pks-inline">
-													<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_excerpt]" value="1" <?php checked(1, (int)$opt['include_excerpt']); ?>/>
-													Inclure l’extrait
-												</label>
-												<label class="pks-inline">
-													<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_url]" value="1" <?php checked(1, (int)$opt['include_url']); ?>/>
-													Inclure l’URL
-												</label>
-											</div>
-											<div class="pks-subbox">
-												<p class="pks-subtitle">Ordre & Personnalisation</p>
-												<label>Ordre du contenu<br/>
-													<select name="<?php echo esc_attr(self::OPT_KEY); ?>[content_order]">
-														<option value="title,excerpt,url" <?php selected('title,excerpt,url', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → Extrait → URL (actuel)</option>
-														<option value="title,url,excerpt" <?php selected('title,url,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → URL → Extrait</option>
-														<option value="url,title,excerpt" <?php selected('url,title,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>URL → Titre → Extrait</option>
-													</select>
-												</label>
-												<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label>
-												<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
-												<label>Template avancé (optionnel)<br/>
-													<textarea class="large-text code" rows="4" name="<?php echo esc_attr(self::OPT_KEY); ?>[text_template]" placeholder="{url}{br}{title}{br2}{excerpt}"><?php echo esc_textarea((string)$opt['text_template']); ?></textarea>
-												</label>
-												<p class="description" style="margin:4px 0 0;">Variables: <code>{prefix}</code>, <code>{title}</code>, <code>{excerpt}</code>, <code>{url}</code>, <code>{suffix}</code>. Sauts: <code>{br}</code> = nouvelle ligne, <code>{br2}</code> = ligne vide. Compatibilité aussi avec <code>/n</code> et <code>/n/n</code>.</p>
-											</div>
+										<div class="pks-subbox">
+											<p class="pks-subtitle">Composition</p>
+											<label class="pks-inline">
+												<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_title]" value="1" <?php checked(1, (int)$opt['include_title']); ?>/>
+												Inclure le titre
+											</label>
+											<label class="pks-inline">
+												<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_excerpt]" value="1" <?php checked(1, (int)$opt['include_excerpt']); ?>/>
+												Inclure l’extrait
+											</label>
+											<label class="pks-inline">
+												<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_url]" value="1" <?php checked(1, (int)$opt['include_url']); ?>/>
+												Inclure l’URL
+											</label>
+											<p class="pks-subtitle" style="margin-top:12px;">Ordre & Personnalisation</p>
+											<label>Ordre du contenu<br/>
+												<select name="<?php echo esc_attr(self::OPT_KEY); ?>[content_order]">
+													<option value="title,excerpt,url" <?php selected('title,excerpt,url', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → Extrait → URL (actuel)</option>
+													<option value="title,url,excerpt" <?php selected('title,url,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → URL → Extrait</option>
+													<option value="url,title,excerpt" <?php selected('url,title,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>URL → Titre → Extrait</option>
+												</select>
+											</label>
+											<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label>
+											<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
+											<label>Template avancé (optionnel)<br/>
+												<textarea class="large-text code" rows="4" name="<?php echo esc_attr(self::OPT_KEY); ?>[text_template]" placeholder="{url}{br}{title}{br2}{excerpt}"><?php echo esc_textarea((string)$opt['text_template']); ?></textarea>
+											</label>
+											<p class="description" style="margin:4px 0 0;">Variables: <code>{prefix}</code>, <code>{title}</code>, <code>{excerpt}</code>, <code>{url}</code>, <code>{suffix}</code>. Sauts: <code>{br}</code> = nouvelle ligne, <code>{br2}</code> = ligne vide. Compatibilité aussi avec <code>/n</code> et <code>/n/n</code>.</p>
 										</div>
 									</div>
 								</div>
@@ -871,6 +869,30 @@ final class PKLIAP_Plugin {
 											</p>
 										<?php else: ?>
 											<p class="description" style="margin:0;">—</p>
+										<?php endif; ?>
+									</td>
+								</tr>
+								<tr>
+									<th scope="row">Journal interne</th>
+									<td>
+										<?php
+										$debug_log = is_array($opt['debug_log']) ? array_slice(array_reverse($opt['debug_log']), 0, 12) : [];
+										?>
+										<?php if (!$debug_log): ?>
+											<p class="description" style="margin:0;">Aucun événement récent.</p>
+										<?php else: ?>
+											<div style="max-height:220px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;background:#fff;padding:8px 10px;">
+												<?php foreach ($debug_log as $entry): ?>
+													<?php
+													$ts = isset($entry['ts']) ? (int)$entry['ts'] : 0;
+													$msg = isset($entry['message']) ? (string)$entry['message'] : '';
+													?>
+													<div style="margin:0 0 8px;padding-bottom:8px;border-bottom:1px dashed #e5e7eb;">
+														<div style="font-size:11px;opacity:.7;"><?php echo esc_html($ts ? wp_date('Y-m-d H:i:s', $ts) : '-'); ?></div>
+														<div style="font-size:12px;white-space:pre-wrap;"><?php echo esc_html($msg); ?></div>
+													</div>
+												<?php endforeach; ?>
+											</div>
 										<?php endif; ?>
 									</td>
 								</tr>
@@ -1110,11 +1132,8 @@ final class PKLIAP_Plugin {
 				'last_share_error' => $msg,
 				'last_share_error_at' => time(),
 			]);
-			$opt_now = self::get_options();
-			if (!empty($opt_now['log_enabled'])) {
-				error_log('[pkliap] ' . $msg);
-				error_log('[pkliap] ' . $e->getTraceAsString());
-			}
+			self::debug_log_event($msg);
+			self::debug_log_event($e->getTraceAsString());
 			self::set_flash('error', $msg);
 			wp_safe_redirect(self::settings_url());
 			exit;
@@ -1124,6 +1143,7 @@ final class PKLIAP_Plugin {
 				'last_share_error' => $res->get_error_message(),
 				'last_share_error_at' => time(),
 			]);
+			self::debug_log_event('Test share failed for post #' . $post_id . ': ' . $res->get_error_message());
 			self::set_flash('error', $res->get_error_message());
 			wp_safe_redirect(self::settings_url());
 			exit;
@@ -1136,7 +1156,9 @@ final class PKLIAP_Plugin {
 		$notice = 'Post LinkedIn envoyé.';
 		if (is_array($res) && !empty($res['warning'])) {
 			$notice .= ' ' . (string)$res['warning'];
+			self::debug_log_event('Test share warning for post #' . $post_id . ': ' . (string)$res['warning']);
 		}
+		self::debug_log_event('Test share success for post #' . $post_id . '.');
 		self::set_flash('notice', $notice);
 		wp_safe_redirect(self::settings_url());
 		exit;
@@ -1174,10 +1196,8 @@ final class PKLIAP_Plugin {
 				'last_share_error' => $msg,
 				'last_share_error_at' => time(),
 			]);
-			if (!empty($opt['log_enabled'])) {
-				error_log('[pkliap] ' . $msg);
-				error_log('[pkliap] ' . $e->getTraceAsString());
-			}
+			self::debug_log_event($msg);
+			self::debug_log_event($e->getTraceAsString());
 			return;
 		}
 		if (is_wp_error($res)) {
@@ -1185,17 +1205,16 @@ final class PKLIAP_Plugin {
 				'last_share_error' => $res->get_error_message(),
 				'last_share_error_at' => time(),
 			]);
-			if (!empty($opt['log_enabled'])) {
-				error_log('[pkliap] LinkedIn share failed for post #' . $post->ID . ': ' . $res->get_error_message());
-			}
+			self::debug_log_event('Auto share failed for post #' . $post->ID . ': ' . $res->get_error_message());
 		} else {
 			self::update_options([
 				'last_share_error' => '',
 				'last_share_error_at' => 0,
 			]);
-			if (is_array($res) && !empty($res['warning']) && !empty($opt['log_enabled'])) {
-				error_log('[pkliap] LinkedIn share warning for post #' . $post->ID . ': ' . (string)$res['warning']);
+			if (is_array($res) && !empty($res['warning'])) {
+				self::debug_log_event('Auto share warning for post #' . $post->ID . ': ' . (string)$res['warning']);
 			}
+			self::debug_log_event('Auto share success for post #' . $post->ID . '.');
 		}
 	}
 
@@ -1697,6 +1716,23 @@ final class PKLIAP_Plugin {
 		$data = get_transient(self::flash_key());
 		delete_transient(self::flash_key());
 		return is_array($data) ? $data : [];
+	}
+
+	private static function debug_log_event(string $message): void {
+		$opt = self::get_options();
+		$log = is_array($opt['debug_log']) ? $opt['debug_log'] : [];
+		$log[] = [
+			'ts' => time(),
+			'message' => $message,
+		];
+		if (count($log) > 40) {
+			$log = array_slice($log, -40);
+		}
+		self::update_options(['debug_log' => $log]);
+
+		if (!empty($opt['log_enabled'])) {
+			error_log('[pkliap] ' . $message);
+		}
 	}
 
 	/** @return array|WP_Error */
