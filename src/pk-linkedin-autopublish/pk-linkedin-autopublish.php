@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.43
+ * Version: 0.44
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -410,6 +410,13 @@ final class PKLIAP_Plugin {
 		$has_client_secret = !empty($opt['client_secret']);
 		$redirect_is_recommended = ($config_redirect_uri === $recommended_redirect_uri);
 		$has_author_urn = !empty($opt['author_urn']);
+		$active_network = isset($_GET['network']) ? sanitize_key((string)wp_unslash($_GET['network'])) : 'linkedin';
+		if (!in_array($active_network, ['linkedin', 'x'], true)) {
+			$active_network = 'linkedin';
+		}
+		$settings_base_url = menu_page_url('pk-socialsharing', false);
+		$link_tab_linkedin = remove_query_arg('network', $settings_base_url);
+		$link_tab_x = add_query_arg('network', 'x', $settings_base_url);
 
 		?>
 		<div class="wrap">
@@ -463,6 +470,14 @@ final class PKLIAP_Plugin {
 				.pks-pill--bad{background:rgba(239,68,68,.14)}
 				.pks-checksplit{display:grid;grid-template-columns:1fr;gap:10px}
 				.pks-publication-split{display:grid;grid-template-columns:1fr;gap:10px}
+				.pks-network-tabs{display:flex;gap:8px;align-items:center;margin:0 0 14px}
+				.pks-network-tab{
+					display:inline-flex;align-items:center;gap:6px;
+					padding:8px 12px;border-radius:999px;text-decoration:none;
+					border:1px solid var(--pks-border);background:#fff;color:#0f172a;font-weight:600;
+				}
+				.pks-network-tab.is-active{background:#0f172a;color:#fff;border-color:#0f172a}
+				.pks-network-pill{font-size:11px;opacity:.7}
 				.pks-checklist{display:flex;flex-direction:column;gap:10px;margin:0}
 				.pks-checkrow{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--pks-border);border-radius:var(--pks-radius);background:var(--pks-bg)}
 				.pks-checkrow strong{display:block;font-size:13px}
@@ -506,6 +521,33 @@ final class PKLIAP_Plugin {
 			?>
 
 			<div class="pks-modern">
+				<div class="pks-network-tabs" role="tablist" aria-label="Réseaux sociaux">
+					<a class="pks-network-tab <?php echo $active_network === 'linkedin' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_linkedin); ?>" role="tab" aria-selected="<?php echo $active_network === 'linkedin' ? 'true' : 'false'; ?>">
+						LinkedIn
+						<span class="pks-network-pill">Actif</span>
+					</a>
+					<a class="pks-network-tab <?php echo $active_network === 'x' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_x); ?>" role="tab" aria-selected="<?php echo $active_network === 'x' ? 'true' : 'false'; ?>">
+						X (Twitter)
+						<span class="pks-network-pill">V2</span>
+					</a>
+				</div>
+
+				<?php if ($active_network === 'x'): ?>
+					<div class="pks-grid">
+						<div class="pks-card pks-card--accent-blue pks-card--wide">
+							<div class="pks-card-title">X (Twitter) — Préparation V2</div>
+							<p class="pks-info" style="margin:0 0 10px;">
+								La base multi-réseaux est en place. L’intégration API X n’est pas encore active dans cette version.
+							</p>
+							<p class="pks-info" style="margin:0 0 10px;">
+								Objectif de la prochaine étape: OAuth X, publication texte/lien/image, statuts et bouton “Publier maintenant” comme LinkedIn.
+							</p>
+							<p class="pks-info" style="margin:0;">
+								Référence fournie: <a href="https://plugins.trac.wordpress.org/browser/autoshare-for-twitter/" target="_blank" rel="noopener">autoshare-for-twitter (WordPress Trac)</a>.
+							</p>
+						</div>
+					</div>
+				<?php else: ?>
 				<div class="pks-grid">
 					<div class="pks-card pks-card--accent-warn pks-card--wide">
 						<div class="pks-card-title">Connexion (pas-à-pas)</div>
@@ -897,6 +939,7 @@ final class PKLIAP_Plugin {
 						</form>
 					</div>
 				</div>
+				<?php endif; ?>
 			</div>
 		</div>
 		<?php
