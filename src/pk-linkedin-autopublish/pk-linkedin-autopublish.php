@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.44
+ * Version: 0.45
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -411,12 +411,13 @@ final class PKLIAP_Plugin {
 		$redirect_is_recommended = ($config_redirect_uri === $recommended_redirect_uri);
 		$has_author_urn = !empty($opt['author_urn']);
 		$active_network = isset($_GET['network']) ? sanitize_key((string)wp_unslash($_GET['network'])) : 'linkedin';
-		if (!in_array($active_network, ['linkedin', 'x'], true)) {
+		if (!in_array($active_network, ['linkedin', 'x', 'instagram'], true)) {
 			$active_network = 'linkedin';
 		}
 		$settings_base_url = menu_page_url('pk-socialsharing', false);
 		$link_tab_linkedin = remove_query_arg('network', $settings_base_url);
 		$link_tab_x = add_query_arg('network', 'x', $settings_base_url);
+		$link_tab_instagram = add_query_arg('network', 'instagram', $settings_base_url);
 
 		?>
 		<div class="wrap">
@@ -530,6 +531,10 @@ final class PKLIAP_Plugin {
 						X (Twitter)
 						<span class="pks-network-pill">V2</span>
 					</a>
+					<a class="pks-network-tab <?php echo $active_network === 'instagram' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_instagram); ?>" role="tab" aria-selected="<?php echo $active_network === 'instagram' ? 'true' : 'false'; ?>">
+						Instagram
+						<span class="pks-network-pill">Coming soon</span>
+					</a>
 				</div>
 
 				<?php if ($active_network === 'x'): ?>
@@ -544,6 +549,18 @@ final class PKLIAP_Plugin {
 							</p>
 							<p class="pks-info" style="margin:0;">
 								Référence fournie: <a href="https://plugins.trac.wordpress.org/browser/autoshare-for-twitter/" target="_blank" rel="noopener">autoshare-for-twitter (WordPress Trac)</a>.
+							</p>
+						</div>
+					</div>
+				<?php elseif ($active_network === 'instagram'): ?>
+					<div class="pks-grid">
+						<div class="pks-card pks-card--accent-purple pks-card--wide">
+							<div class="pks-card-title">Instagram — Coming soon</div>
+							<p class="pks-info" style="margin:0 0 10px;">
+								Prévu pour la V2+: connexion Meta, publication image + légende, et statut de diffusion comme LinkedIn.
+							</p>
+							<p class="pks-info" style="margin:0;">
+								L’onglet est prêt, l’API n’est pas encore branchée.
 							</p>
 						</div>
 					</div>
