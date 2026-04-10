@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.31
+ * Version: 0.32
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -757,7 +757,8 @@ final class PKLIAP_Plugin {
 									<?php
 									$shared_at = (int)get_post_meta($p->ID, self::META_SHARED_AT, true);
 									$share_urn = (string)get_post_meta($p->ID, self::META_SHARE_URN, true);
-									$status = $shared_at ? ('Partagé le ' . esc_html(wp_date('Y-m-d H:i', $shared_at)) . ($share_urn ? '<br/><code style="font-size:11px;">' . esc_html($share_urn) . '</code>' : '')) : 'Jamais partagé';
+									$share_url = self::linkedin_share_url_from_urn($share_urn);
+									$status = $shared_at ? ('Partagé le ' . esc_html(wp_date('Y-m-d H:i', $shared_at)) . ($share_urn ? '<br/><code style="font-size:11px;">' . esc_html($share_urn) . '</code>' : '') . ($share_url ? '<br/><a href="' . esc_url($share_url) . '" target="_blank" rel="noopener">Voir sur LinkedIn</a>' : '')) : 'Jamais partagé';
 									$action_url = wp_nonce_url(self::admin_url_action('pkliap_test_post') . '&post_id=' . (int)$p->ID, 'pkliap_test_post_' . (int)$p->ID);
 									$edit_url = get_edit_post_link($p->ID, '');
 									$thumb_html = get_the_post_thumbnail($p->ID, [48, 48], ['style' => 'width:48px;height:48px;object-fit:cover;border-radius:4px;']);
@@ -1282,6 +1283,14 @@ final class PKLIAP_Plugin {
 			$url = add_query_arg($args, $url);
 		}
 		return $url;
+	}
+
+	private static function linkedin_share_url_from_urn(string $urn): string {
+		$urn = trim($urn);
+		if ($urn === '' || strpos($urn, 'urn:li:') !== 0) {
+			return '';
+		}
+		return 'https://www.linkedin.com/feed/update/' . rawurlencode($urn) . '/';
 	}
 
 	private static function get_post_link(int $post_id, array $opt): string {
