@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.46
+ * Version: 0.47
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -426,6 +426,9 @@ final class PKLIAP_Plugin {
 		$link_docs_ugc = 'https://learn.microsoft.com/linkedin/marketing/community-management/shares/ugc-post-api';
 		$link_docs_posts = 'https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api?view=li-lms-2025-10';
 		$link_docs_images = 'https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/images-api?view=li-lms-2026-02';
+		$link_x_developer = 'https://developer.x.com/en/portal/dashboard';
+		$link_x_projects = 'https://developer.x.com/en/portal/projects-and-apps';
+		$link_x_oauth_docs = 'https://developer.x.com/en/docs/authentication/oauth-1-0a/obtaining-user-access-tokens';
 
 		$recommended_redirect_uri = self::admin_url_action('pkliap_oauth_callback');
 		$config_redirect_uri = $opt['redirect_uri'] ?: $recommended_redirect_uri;
@@ -572,19 +575,29 @@ final class PKLIAP_Plugin {
 									<th scope="row">API Key</th>
 									<td>
 										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_api_key]" value="<?php echo esc_attr((string)$opt['x_api_key']); ?>"/>
+										<p class="description" style="margin-top:6px;">
+											Obtenir la clé dans <a href="<?php echo esc_url($link_x_projects); ?>" target="_blank" rel="noopener">Projects &amp; Apps</a> → ton app → Keys and tokens.
+										</p>
 									</td>
 								</tr>
 								<tr>
 									<th scope="row">API Key Secret</th>
 									<td>
 										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_api_secret]" value="<?php echo esc_attr((string)$opt['x_api_secret']); ?>"/>
+										<p class="description" style="margin-top:6px;">
+											Même écran que l’API Key. Si absent, régénère le secret dans ton app X.
+										</p>
 									</td>
 								</tr>
 								<tr>
 									<th scope="row">Callback URL</th>
 									<td>
 										<input class="regular-text" type="text" readonly value="<?php echo esc_attr($x_callback_uri); ?>"/>
-										<p class="description">À configurer dans ton app X OAuth 1.0a user context.</p>
+										<p class="description">À configurer dans ton app X OAuth 1.0a user context (User authentication settings).</p>
+										<p class="description" style="margin-top:6px;">
+											Docs OAuth: <a href="<?php echo esc_url($link_x_oauth_docs); ?>" target="_blank" rel="noopener">Obtaining user access tokens</a>.<br/>
+											Portail dev: <a href="<?php echo esc_url($link_x_developer); ?>" target="_blank" rel="noopener">Developer Dashboard</a>.
+										</p>
 									</td>
 								</tr>
 							</table>
