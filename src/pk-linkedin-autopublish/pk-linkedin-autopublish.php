@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.27
+ * Version: 0.29
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -221,8 +221,8 @@ final class PKLIAP_Plugin {
 			'utm_medium' => 'social',
 			'utm_campaign' => 'autopublish',
 			'last_author_detect_error' => '',
-			// "opengraph" = pas d'upload image : LinkedIn fait le preview depuis l'URL (og:image).
-			// "upload" = upload featured image via Assets/registerUpload (souvent restreint).
+			// "opengraph" = pas d'upload image : LinkedIn fait le preview depuis l'URL.
+			// "upload" = upload featured image via Images API, puis publication via Posts API.
 			'media_mode' => 'opengraph',
 			'require_image' => 0,
 			'last_assets_error' => '',
@@ -391,7 +391,8 @@ final class PKLIAP_Plugin {
 		$link_docs_oauth = 'https://learn.microsoft.com/linkedin/shared/authentication/authorization-code-flow';
 		$link_docs_oidc = 'https://learn.microsoft.com/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2';
 		$link_docs_ugc = 'https://learn.microsoft.com/linkedin/marketing/community-management/shares/ugc-post-api';
-		$link_docs_assets = 'https://learn.microsoft.com/linkedin/marketing/integrations/community-management/shares/vector-asset-api';
+		$link_docs_posts = 'https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api?view=li-lms-2025-10';
+		$link_docs_images = 'https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/images-api?view=li-lms-2026-02';
 
 		$recommended_redirect_uri = self::admin_url_action('pkliap_oauth_callback');
 		$config_redirect_uri = $opt['redirect_uri'] ?: $recommended_redirect_uri;
@@ -522,11 +523,11 @@ final class PKLIAP_Plugin {
 							<div class="pks-checkrow">
 								<?php echo empty($opt['last_assets_error']) ? '<span class="pks-pill pks-pill--warn">À VALIDER</span>' : '<span class="pks-pill pks-pill--bad">BLOQUÉ</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 								<div>
-									<strong>Image obligatoire (Assets / registerUpload)</strong>
-									<p>Pour publier avec image, LinkedIn doit autoriser l’API d’upload “Assets” (action <code>registerUpload</code>). Sinon tu auras un 403 “Not enough permissions … registerUpload”.</p>
-									<p>Doc : <a href="<?php echo esc_url($link_docs_assets); ?>" target="_blank" rel="noopener">Asset / registerUpload</a>.</p>
+									<strong>Image obligatoire (Images API)</strong>
+									<p>Le mode “upload” utilise désormais <code>/rest/images?action=initializeUpload</code> puis <code>/rest/posts</code>. Avec un profil membre, le scope <code>w_member_social</code> suffit normalement.</p>
+									<p>Doc : <a href="<?php echo esc_url($link_docs_images); ?>" target="_blank" rel="noopener">Images API</a> et <a href="<?php echo esc_url($link_docs_posts); ?>" target="_blank" rel="noopener">Posts API</a>.</p>
 									<?php if (!empty($opt['last_assets_error'])): ?>
-										<p style="color:#b32d2e;margin:6px 0 0;">Dernière erreur Assets : <?php echo esc_html($opt['last_assets_error']); ?></p>
+										<p style="color:#b32d2e;margin:6px 0 0;">Dernière erreur image : <?php echo esc_html($opt['last_assets_error']); ?></p>
 									<?php endif; ?>
 								</div>
 							</div>
@@ -570,7 +571,7 @@ final class PKLIAP_Plugin {
 								<th scope="row">LinkedIn-Version</th>
 								<td>
 									<input class="regular-text" style="max-width:140px;" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[linkedin_version]" value="<?php echo esc_attr($opt['linkedin_version']); ?>"/>
-									<p class="description">Format <code>YYYYMM</code> (API Assets pour l’upload image).</p>
+									<p class="description">Format <code>YYYYMM</code> pour les APIs LinkedIn versionnées (<code>rest/images</code>, <code>rest/posts</code>).</p>
 								</td>
 							</tr>
 						</table>
@@ -700,9 +701,9 @@ final class PKLIAP_Plugin {
 									<p class="description" style="margin-top:0;">LinkedIn génère l’image depuis <code>og:image</code> de ton article (pas besoin d’upload API).</p>
 									<label style="display:block;margin:8px 0 2px;">
 										<input type="radio" name="<?php echo esc_attr(self::OPT_KEY); ?>[media_mode]" value="upload" <?php checked('upload', (string)$opt['media_mode']); ?>/>
-										Upload image mise en avant (Assets/registerUpload)
+										Upload image mise en avant (Images API)
 									</label>
-									<p class="description" style="margin-top:0;">Nécessite une permission LinkedIn souvent refusée. Si 403, ça ne marchera pas.</p>
+									<p class="description" style="margin-top:0;">Upload via <code>rest/images</code>, puis création du post via <code>rest/posts</code>.</p>
 									<label style="display:block;margin-top:10px;">
 										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[require_image]" value="1" <?php checked(1, (int)$opt['require_image']); ?>/>
 										Image obligatoire (si pas d’image/si upload refusé → erreur)
@@ -1147,7 +1148,7 @@ final class PKLIAP_Plugin {
 		$warn_no_image = '';
 		$media_mode = (string)($opt['media_mode'] ?? 'opengraph');
 
-		$asset_urn = '';
+		$image_urn = '';
 		$thumb_id = get_post_thumbnail_id($post_id);
 
 		if ($media_mode === 'upload') {
@@ -1155,34 +1156,49 @@ final class PKLIAP_Plugin {
 				return new WP_Error('pkliap_image_required', 'Image obligatoire : ajoute une image mise en avant (Featured image) sur cet article.');
 			}
 			if ($thumb_id) {
-				$asset_urn_res = self::upload_featured_image($thumb_id, $opt);
-				if (is_wp_error($asset_urn_res)) {
-					$msg = $asset_urn_res->get_error_message();
-					if (
-						strpos($msg, 'Not enough permissions') !== false
-						&& (strpos($msg, 'registerUpload') !== false || strpos($msg, 'partnerApiAssets') !== false)
-					) {
-						self::update_options([
-							'last_assets_error' => $msg,
-							'last_assets_error_at' => time(),
-						]);
-						if (!empty($opt['require_image'])) {
-							return new WP_Error(
-								'pkliap_assets_permissions',
-								"LinkedIn refuse l’upload d’image (Assets/registerUpload). Passe le mode média en “Preview via URL (OpenGraph)” ou demande l’accès LinkedIn Assets. Détail: {$msg}"
-							);
-						}
-						$warn_no_image = 'Post publié sans image (permissions LinkedIn Assets manquantes).';
-					} else {
-						return $asset_urn_res;
+				$image_urn_res = self::upload_featured_image($thumb_id, $opt);
+				if (is_wp_error($image_urn_res)) {
+					$msg = $image_urn_res->get_error_message();
+					self::update_options([
+						'last_assets_error' => $msg,
+						'last_assets_error_at' => time(),
+					]);
+					if (!empty($opt['require_image'])) {
+						return $image_urn_res;
 					}
-				} elseif ($asset_urn_res) {
-					$asset_urn = (string)$asset_urn_res;
+					$warn_no_image = 'Post publié sans image (upload LinkedIn indisponible).';
+				} elseif ($image_urn_res) {
+					$image_urn = (string)$image_urn_res;
 					self::update_options([
 						'last_assets_error' => '',
 						'last_assets_error_at' => 0,
 					]);
 				}
+			}
+
+			if ($image_urn) {
+				$res = self::linkedin_create_image_post($post_id, $text, $image_urn, $opt);
+				if (is_wp_error($res)) {
+					return $res;
+				}
+
+				$urn = '';
+				if (isset($res['headers']['x-restli-id'])) {
+					$urn = (string)$res['headers']['x-restli-id'];
+				}
+				if (!$urn && isset($res['body']['id'])) {
+					$urn = (string)$res['body']['id'];
+				}
+
+				update_post_meta($post_id, self::META_SHARED_AT, time());
+				if ($urn) {
+					update_post_meta($post_id, self::META_SHARE_URN, $urn);
+				}
+
+				return [
+					'urn' => $urn,
+					'warning' => $warn_no_image,
+				];
 			}
 		} else {
 			// mode opengraph: LinkedIn fait l'unfurl de l'URL (og:image).
@@ -1202,7 +1218,7 @@ final class PKLIAP_Plugin {
 					'shareCommentary' => [
 						'text' => $text,
 					],
-					'shareMediaCategory' => $asset_urn ? 'IMAGE' : (($media_mode === 'opengraph') ? 'ARTICLE' : 'NONE'),
+					'shareMediaCategory' => (($media_mode === 'opengraph') ? 'ARTICLE' : 'NONE'),
 				],
 			],
 			'visibility' => [
@@ -1210,15 +1226,7 @@ final class PKLIAP_Plugin {
 			],
 		];
 
-		if ($asset_urn) {
-			$payload['specificContent']['com.linkedin.ugc.ShareContent']['media'] = [[
-				'status' => 'READY',
-				'description' => ['text' => self::safe_excerpt($post_id, 200)],
-				'media' => $asset_urn,
-				'title' => ['text' => get_the_title($post_id)],
-				'originalUrl' => $link,
-			]];
-		} elseif ($media_mode === 'opengraph') {
+		if ($media_mode === 'opengraph') {
 			// Laisse LinkedIn générer un aperçu depuis l'URL (OpenGraph).
 			$payload['specificContent']['com.linkedin.ugc.ShareContent']['media'] = [[
 				'status' => 'READY',
@@ -1318,6 +1326,13 @@ final class PKLIAP_Plugin {
 		return self::mb_truncate($excerpt, $max_len);
 	}
 
+	private static function build_linkedin_image_alt_text(int $post_id): string {
+		$title = wp_strip_all_tags(get_the_title($post_id));
+		$excerpt = self::safe_excerpt($post_id, 90);
+		$parts = array_filter([$title, $excerpt], static fn($part) => (string)$part !== '');
+		return self::mb_truncate(implode(' - ', $parts), 120);
+	}
+
 	private static function mb_truncate(string $s, int $max): string {
 		if ($max <= 0) {
 			return '';
@@ -1334,6 +1349,30 @@ final class PKLIAP_Plugin {
 		return rtrim(substr($s, 0, max(0, $max - 1))) . '…';
 	}
 
+	/** @return array|WP_Error */
+	private static function linkedin_create_image_post(int $post_id, string $text, string $image_urn, array $opt) {
+		$payload = [
+			'author' => $opt['author_urn'],
+			'commentary' => $text,
+			'visibility' => $opt['visibility'],
+			'distribution' => [
+				'feedDistribution' => 'MAIN_FEED',
+				'targetEntities' => [],
+				'thirdPartyDistributionChannels' => [],
+			],
+			'content' => [
+				'media' => [
+					'altText' => self::build_linkedin_image_alt_text($post_id),
+					'id' => $image_urn,
+				],
+			],
+			'lifecycleState' => 'PUBLISHED',
+			'isReshareDisabledByAuthor' => false,
+		];
+
+		return self::linkedin_api_post_versioned('/rest/posts', $payload, $opt['access_token'], (string)$opt['linkedin_version']);
+	}
+
 	/** @return string|WP_Error */
 	private static function upload_featured_image(int $attachment_id, array $opt) {
 		$file = get_attached_file($attachment_id);
@@ -1347,64 +1386,29 @@ final class PKLIAP_Plugin {
 		}
 
 		$register_payload = [
-			'registerUploadRequest' => [
+			'initializeUploadRequest' => [
 				'owner' => $opt['author_urn'],
-				'recipes' => ['urn:li:digitalmediaRecipe:feedshare-image'],
-				'serviceRelationships' => [[
-					'identifier' => 'urn:li:userGeneratedContent',
-					'relationshipType' => 'OWNER',
-				]],
-				'supportedUploadMechanism' => ['SYNCHRONOUS_UPLOAD'],
 			],
 		];
 
-		$version_header = self::linkedin_version_header((string)$opt['linkedin_version']);
-		$register = self::linkedin_api_post('/rest/assets?action=registerUpload', $register_payload, $opt['access_token'], [
-			'Linkedin-Version' => $version_header,
-			'X-Restli-Protocol-Version' => '2.0.0',
-		]);
-
-		// LinkedIn renvoie parfois HTTP 426 si la version demandée n'est pas active (ex: 20260401).
-		// Fallback: retenter avec le mois précédent (YYYYMM01).
-		if (is_wp_error($register) && $register->get_error_code() === 'pkliap_api_error' && strpos($register->get_error_message(), 'HTTP 426') !== false) {
-			$prev = self::linkedin_prev_month_version($version_header);
-			if ($prev) {
-				$register = self::linkedin_api_post('/rest/assets?action=registerUpload', $register_payload, $opt['access_token'], [
-					'Linkedin-Version' => $prev,
-					'X-Restli-Protocol-Version' => '2.0.0',
-				]);
-				if (!is_wp_error($register)) {
-					// Met à jour le réglage pour éviter de re-tomber sur 426.
-					self::update_options([
-						'linkedin_version' => substr($prev, 0, 6),
-					]);
-				}
-			}
-		}
-
+		$register = self::linkedin_api_post_versioned('/rest/images?action=initializeUpload', $register_payload, $opt['access_token'], (string)$opt['linkedin_version']);
 		if (is_wp_error($register)) {
 			return $register;
 		}
 
-		$asset = (string)($register['body']['value']['asset'] ?? '');
-		$upload_mechanism = $register['body']['value']['uploadMechanism']['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'] ?? [];
-		$upload_url = (string)($upload_mechanism['uploadUrl'] ?? '');
-		if (!$asset || !$upload_url) {
-			return new WP_Error('pkliap_register_upload_failed', 'Impossible de récupérer asset/uploadUrl depuis registerUpload.');
+		$image_urn = (string)($register['body']['value']['image'] ?? '');
+		$upload_url = (string)($register['body']['value']['uploadUrl'] ?? '');
+		if (!$image_urn || !$upload_url) {
+			return new WP_Error('pkliap_register_upload_failed', 'Impossible de récupérer image/uploadUrl depuis initializeUpload.');
 		}
 
 		$upload_headers = [
 			'Authorization' => 'Bearer ' . $opt['access_token'],
 			'Content-Type' => $mime,
 		];
-		if (!empty($upload_mechanism['headers']) && is_array($upload_mechanism['headers'])) {
-			foreach ($upload_mechanism['headers'] as $header_name => $header_value) {
-				$upload_headers[(string)$header_name] = is_array($header_value) ? implode(',', $header_value) : (string)$header_value;
-			}
-		}
 
 		$put = wp_remote_request($upload_url, [
-			'method' => 'POST',
+			'method' => 'PUT',
 			'timeout' => 45,
 			'headers' => $upload_headers,
 			'body' => file_get_contents($file),
@@ -1419,7 +1423,12 @@ final class PKLIAP_Plugin {
 			return new WP_Error('pkliap_upload_failed', 'Upload image LinkedIn échoué (HTTP ' . $code . ').');
 		}
 
-		return $asset;
+		$wait = self::wait_for_linkedin_image($image_urn, $opt);
+		if (is_wp_error($wait)) {
+			return $wait;
+		}
+
+		return $image_urn;
 	}
 
 	private static function linkedin_version_header(string $v): string {
@@ -1436,6 +1445,80 @@ final class PKLIAP_Plugin {
 			return substr($digits, 0, 6); // YYYYMM (drop day)
 		}
 		return gmdate('Ym');
+	}
+
+	/** @return array|WP_Error */
+	private static function linkedin_api_post_versioned(string $path, array $payload, string $access_token, string $linkedin_version) {
+		$version_header = self::linkedin_version_header($linkedin_version);
+		$res = self::linkedin_api_post($path, $payload, $access_token, [
+			'Linkedin-Version' => $version_header,
+			'X-Restli-Protocol-Version' => '2.0.0',
+		]);
+
+		if (is_wp_error($res) && $res->get_error_code() === 'pkliap_api_error' && strpos($res->get_error_message(), 'HTTP 426') !== false) {
+			$prev = self::linkedin_prev_month_version($version_header);
+			if ($prev) {
+				$res = self::linkedin_api_post($path, $payload, $access_token, [
+					'Linkedin-Version' => $prev,
+					'X-Restli-Protocol-Version' => '2.0.0',
+				]);
+				if (!is_wp_error($res)) {
+					self::update_options([
+						'linkedin_version' => substr($prev, 0, 6),
+					]);
+				}
+			}
+		}
+
+		return $res;
+	}
+
+	/** @return array|WP_Error */
+	private static function linkedin_get_image(string $image_urn, string $access_token, string $linkedin_version, bool $versioned = true) {
+		$headers = [
+			'X-Restli-Protocol-Version' => '2.0.0',
+		];
+		if ($versioned) {
+			$headers['Linkedin-Version'] = self::linkedin_version_header($linkedin_version);
+		}
+		return self::linkedin_api_get('/rest/images/' . rawurlencode($image_urn), $access_token, $headers);
+	}
+
+	/** @return true|WP_Error */
+	private static function wait_for_linkedin_image(string $image_urn, array $opt) {
+		$last_error = null;
+
+		for ($attempt = 0; $attempt < 6; $attempt++) {
+			$status_res = self::linkedin_get_image($image_urn, (string)$opt['access_token'], (string)$opt['linkedin_version'], true);
+			if (
+				is_wp_error($status_res)
+				&& strpos($status_res->get_error_message(), 'HTTP 403') !== false
+			) {
+				$status_res = self::linkedin_get_image($image_urn, (string)$opt['access_token'], (string)$opt['linkedin_version'], false);
+			}
+
+			if (is_wp_error($status_res)) {
+				$last_error = $status_res;
+			} else {
+				$status = (string)($status_res['body']['status'] ?? '');
+				if ($status === 'AVAILABLE') {
+					return true;
+				}
+				if ($status === 'PROCESSING_FAILED') {
+					return new WP_Error('pkliap_image_processing_failed', 'LinkedIn a reçu l’image mais son traitement a échoué.');
+				}
+			}
+
+			if ($attempt < 5) {
+				sleep(2);
+			}
+		}
+
+		if ($last_error instanceof WP_Error) {
+			return $last_error;
+		}
+
+		return new WP_Error('pkliap_image_processing_timeout', 'LinkedIn a reçu l’image mais elle n’est pas encore disponible. Réessaie dans quelques secondes.');
 	}
 
 	private static function linkedin_prev_month_version(string $version_header): string {

@@ -26,8 +26,8 @@ Plugin WordPress “maison” pour publier automatiquement sur LinkedIn à la pu
 Ce plugin utilise :
 
 - OAuth2 (Authorization Code)
-- Création de posts : endpoint `v2/ugcPosts`
-- Upload image : endpoint `rest/assets?action=registerUpload`
+- Création de posts : endpoint `rest/posts` (et `v2/ugcPosts` pour le mode article/OpenGraph)
+- Upload image : endpoint `rest/images?action=initializeUpload`
 
 Pour que ça marche, il faut une app LinkedIn configurée avec :
 
