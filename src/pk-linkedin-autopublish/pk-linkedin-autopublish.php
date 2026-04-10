@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.34
+ * Version: 0.36
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -457,11 +457,11 @@ final class PKLIAP_Plugin {
 				.pks-pill--ok{background:rgba(16,185,129,.14)}
 				.pks-pill--warn{background:rgba(245,158,11,.16)}
 				.pks-pill--bad{background:rgba(239,68,68,.14)}
-				.pks-checklist{display:grid;grid-template-columns:1fr;gap:10px;margin:0}
+				.pks-checksplit{display:grid;grid-template-columns:1fr;gap:10px}
+				.pks-checklist{display:flex;flex-direction:column;gap:10px;margin:0}
 				.pks-checkrow{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--pks-border);border-radius:var(--pks-radius);background:var(--pks-bg)}
 				.pks-checkrow strong{display:block;font-size:13px}
 				.pks-checkrow p{margin:2px 0 0;font-size:12px;color:var(--pks-muted)}
-				.pks-checkrow--wide{grid-column:1 / -1}
 				.pks-publication-table{border-collapse:separate;border-spacing:0 12px}
 				.pks-publication-table tr{background:var(--pks-bg);border:1px solid var(--pks-border)}
 				.pks-publication-table th,
@@ -475,19 +475,25 @@ final class PKLIAP_Plugin {
 				.pks-subbox{background:#fff;border:1px solid var(--pks-border);border-radius:8px;padding:10px}
 				.pks-subtitle{margin:0 0 8px;font-weight:600;font-size:12px;color:#111827}
 				.pks-subbox label{margin:0 0 6px}
-				@media (min-width: 1000px){
+				@media (min-width: 760px){
 					.pks-publication-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 					.pks-publication-table tbody{display:contents}
 					.pks-publication-table tr{display:block;border-radius:10px}
 				}
-				@media (min-width: 1400px){
+				@media (min-width: 1080px){
 					.pks-publication-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+				}
+				@media (min-width: 1320px){
+					.pks-publication-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+				}
+				@media (min-width: 1640px){
+					.pks-publication-grid{grid-template-columns:repeat(5,minmax(0,1fr))}
 				}
 				@media (min-width: 1200px){
 					.pks-text-grid{grid-template-columns:1.1fr .9fr}
 				}
 				@media (min-width: 1080px){
-					.pks-checklist{grid-template-columns:repeat(2,minmax(0,1fr))}
+					.pks-checksplit{grid-template-columns:repeat(2,minmax(0,1fr))}
 				}
 			</style>
 
@@ -505,64 +511,68 @@ final class PKLIAP_Plugin {
 				<div class="pks-grid">
 					<div class="pks-card pks-card--accent-warn pks-card--wide">
 						<div class="pks-card-title">Connexion (pas-à-pas)</div>
-						<div class="pks-checklist">
-							<div class="pks-checkrow">
-								<?php echo $has_client_id ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-								<div>
-									<strong>1) Client ID</strong>
-									<p>À copier depuis <a href="<?php echo esc_url($link_apps); ?>" target="_blank" rel="noopener">LinkedIn Developers</a> → ton app → Auth.</p>
+						<div class="pks-checksplit">
+							<div class="pks-checklist">
+								<div class="pks-checkrow">
+									<?php echo $has_client_id ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+									<div>
+										<strong>1) Client ID</strong>
+										<p>À copier depuis <a href="<?php echo esc_url($link_apps); ?>" target="_blank" rel="noopener">LinkedIn Developers</a> → ton app → Auth.</p>
+									</div>
+								</div>
+								<div class="pks-checkrow">
+									<?php echo $has_client_secret ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+									<div>
+										<strong>2) Client Secret</strong>
+										<p>Même écran que le Client ID (Generate/Regenerate si besoin).</p>
+									</div>
+								</div>
+								<div class="pks-checkrow">
+									<?php echo $redirect_is_recommended ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--warn">WARN</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+									<div>
+										<strong>3) Redirect URI (doit matcher LinkedIn)</strong>
+										<p>Dans LinkedIn → Auth → “Authorized redirect URLs” : <code><?php echo esc_html($recommended_redirect_uri); ?></code></p>
+										<?php if (!$redirect_is_recommended): ?>
+											<p>Actuel côté plugin : <code><?php echo esc_html($config_redirect_uri); ?></code></p>
+										<?php endif; ?>
+									</div>
+								</div>
+								<div class="pks-checkrow">
+									<?php echo $has_token ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+									<div>
+										<strong>4) OAuth (connexion)</strong>
+										<p>Clique “Connecter / Reconnecter”, accepte sur LinkedIn, puis reviens ici. Si tu vois “State OAuth invalide” ou “Bummer”, c’est presque toujours un souci de produit/scopes ou de redirect URI.</p>
+										<?php if (!empty($opt['last_oauth_error'])): ?>
+											<p style="color:#b32d2e;">Dernière erreur OAuth : <?php echo esc_html($opt['last_oauth_error']); ?></p>
+										<?php endif; ?>
+									</div>
+								</div>
+								<div class="pks-checkrow">
+									<?php echo $has_author_urn ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--warn">À FAIRE</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+									<div>
+										<strong>5) Author URN (qui poste)</strong>
+										<p>Profil : auto-détection après connexion. Page : à renseigner en <code>urn:li:organization:…</code> (nécessite permissions organisations).</p>
+									</div>
 								</div>
 							</div>
-							<div class="pks-checkrow">
-								<?php echo $has_client_secret ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-								<div>
-									<strong>2) Client Secret</strong>
-									<p>Même écran que le Client ID (Generate/Regenerate si besoin).</p>
+							<div class="pks-checklist">
+								<div class="pks-checkrow">
+									<span class="pks-pill pks-pill--warn">MANUEL</span>
+									<div>
+										<strong>Pré-requis LinkedIn (à vérifier côté Developers)</strong>
+										<p>Products : activer “Share on LinkedIn” (post) et idéalement “Sign In with LinkedIn using OpenID Connect” (pour identifier le membre via <code>/userinfo</code>). Voir : <a href="<?php echo esc_url($link_docs_oidc); ?>" target="_blank" rel="noopener">doc OIDC</a>.</p>
+									</div>
 								</div>
-							</div>
-							<div class="pks-checkrow">
-								<?php echo $redirect_is_recommended ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--warn">WARN</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-								<div>
-									<strong>3) Redirect URI (doit matcher LinkedIn)</strong>
-									<p>Dans LinkedIn → Auth → “Authorized redirect URLs” : <code><?php echo esc_html($recommended_redirect_uri); ?></code></p>
-									<?php if (!$redirect_is_recommended): ?>
-										<p>Actuel côté plugin : <code><?php echo esc_html($config_redirect_uri); ?></code></p>
-									<?php endif; ?>
-								</div>
-							</div>
-							<div class="pks-checkrow">
-								<?php echo $has_token ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--bad">NON</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-								<div>
-									<strong>4) OAuth (connexion)</strong>
-									<p>Clique “Connecter / Reconnecter”, accepte sur LinkedIn, puis reviens ici. Si tu vois “State OAuth invalide” ou “Bummer”, c’est presque toujours un souci de produit/scopes ou de redirect URI.</p>
-									<?php if (!empty($opt['last_oauth_error'])): ?>
-										<p style="color:#b32d2e;">Dernière erreur OAuth : <?php echo esc_html($opt['last_oauth_error']); ?></p>
-									<?php endif; ?>
-								</div>
-							</div>
-							<div class="pks-checkrow">
-								<?php echo $has_author_urn ? '<span class="pks-pill pks-pill--ok">OK</span>' : '<span class="pks-pill pks-pill--warn">À FAIRE</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-								<div>
-									<strong>5) Author URN (qui poste)</strong>
-									<p>Profil : auto-détection après connexion. Page : à renseigner en <code>urn:li:organization:…</code> (nécessite permissions organisations).</p>
-								</div>
-							</div>
-							<div class="pks-checkrow pks-checkrow--wide">
-								<span class="pks-pill pks-pill--warn">MANUEL</span>
-								<div>
-									<strong>Pré-requis LinkedIn (à vérifier côté Developers)</strong>
-									<p>Products : activer “Share on LinkedIn” (post) et idéalement “Sign In with LinkedIn using OpenID Connect” (pour identifier le membre via <code>/userinfo</code>). Voir : <a href="<?php echo esc_url($link_docs_oidc); ?>" target="_blank" rel="noopener">doc OIDC</a>.</p>
-								</div>
-							</div>
-							<div class="pks-checkrow pks-checkrow--wide">
-								<?php echo empty($opt['last_assets_error']) ? '<span class="pks-pill pks-pill--warn">À VALIDER</span>' : '<span class="pks-pill pks-pill--bad">BLOQUÉ</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-								<div>
-									<strong>Image obligatoire (Images API)</strong>
-									<p>Le mode “upload” utilise désormais <code>/rest/images?action=initializeUpload</code> puis <code>/rest/posts</code>. Avec un profil membre, le scope <code>w_member_social</code> suffit normalement.</p>
-									<p>Doc : <a href="<?php echo esc_url($link_docs_images); ?>" target="_blank" rel="noopener">Images API</a> et <a href="<?php echo esc_url($link_docs_posts); ?>" target="_blank" rel="noopener">Posts API</a>.</p>
-									<?php if (!empty($opt['last_assets_error'])): ?>
-										<p style="color:#b32d2e;margin:6px 0 0;">Dernière erreur image : <?php echo esc_html($opt['last_assets_error']); ?></p>
-									<?php endif; ?>
+								<div class="pks-checkrow">
+									<?php echo empty($opt['last_assets_error']) ? '<span class="pks-pill pks-pill--warn">À VALIDER</span>' : '<span class="pks-pill pks-pill--bad">BLOQUÉ</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+									<div>
+										<strong>Image obligatoire (Images API)</strong>
+										<p>Le mode “upload” utilise désormais <code>/rest/images?action=initializeUpload</code> puis <code>/rest/posts</code>. Avec un profil membre, le scope <code>w_member_social</code> suffit normalement.</p>
+										<p>Doc : <a href="<?php echo esc_url($link_docs_images); ?>" target="_blank" rel="noopener">Images API</a> et <a href="<?php echo esc_url($link_docs_posts); ?>" target="_blank" rel="noopener">Posts API</a>.</p>
+										<?php if (!empty($opt['last_assets_error'])): ?>
+											<p style="color:#b32d2e;margin:6px 0 0;">Dernière erreur image : <?php echo esc_html($opt['last_assets_error']); ?></p>
+										<?php endif; ?>
+									</div>
 								</div>
 							</div>
 						</div>
