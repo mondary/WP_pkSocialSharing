@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.32
+ * Version: 0.34
  * Author: PK
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -457,10 +457,38 @@ final class PKLIAP_Plugin {
 				.pks-pill--ok{background:rgba(16,185,129,.14)}
 				.pks-pill--warn{background:rgba(245,158,11,.16)}
 				.pks-pill--bad{background:rgba(239,68,68,.14)}
-				.pks-checklist{display:flex;flex-direction:column;gap:10px;margin:0}
+				.pks-checklist{display:grid;grid-template-columns:1fr;gap:10px;margin:0}
 				.pks-checkrow{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--pks-border);border-radius:var(--pks-radius);background:var(--pks-bg)}
 				.pks-checkrow strong{display:block;font-size:13px}
 				.pks-checkrow p{margin:2px 0 0;font-size:12px;color:var(--pks-muted)}
+				.pks-checkrow--wide{grid-column:1 / -1}
+				.pks-publication-table{border-collapse:separate;border-spacing:0 12px}
+				.pks-publication-table tr{background:var(--pks-bg);border:1px solid var(--pks-border)}
+				.pks-publication-table th,
+				.pks-publication-table td{display:block;width:100%;box-sizing:border-box}
+				.pks-publication-table th{padding:12px 14px 0;font-size:13px}
+				.pks-publication-table td{padding:10px 14px 14px}
+				.pks-publication-table label{display:block;margin:0 0 8px}
+				.pks-publication-table .pks-inline{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
+				.pks-publication-grid{display:grid;grid-template-columns:1fr;gap:12px}
+				.pks-text-grid{display:grid;grid-template-columns:1fr;gap:12px}
+				.pks-subbox{background:#fff;border:1px solid var(--pks-border);border-radius:8px;padding:10px}
+				.pks-subtitle{margin:0 0 8px;font-weight:600;font-size:12px;color:#111827}
+				.pks-subbox label{margin:0 0 6px}
+				@media (min-width: 1000px){
+					.pks-publication-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+					.pks-publication-table tbody{display:contents}
+					.pks-publication-table tr{display:block;border-radius:10px}
+				}
+				@media (min-width: 1400px){
+					.pks-publication-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+				}
+				@media (min-width: 1200px){
+					.pks-text-grid{grid-template-columns:1.1fr .9fr}
+				}
+				@media (min-width: 1080px){
+					.pks-checklist{grid-template-columns:repeat(2,minmax(0,1fr))}
+				}
 			</style>
 
 			<?php
@@ -519,14 +547,14 @@ final class PKLIAP_Plugin {
 									<p>Profil : auto-détection après connexion. Page : à renseigner en <code>urn:li:organization:…</code> (nécessite permissions organisations).</p>
 								</div>
 							</div>
-							<div class="pks-checkrow">
+							<div class="pks-checkrow pks-checkrow--wide">
 								<span class="pks-pill pks-pill--warn">MANUEL</span>
 								<div>
 									<strong>Pré-requis LinkedIn (à vérifier côté Developers)</strong>
 									<p>Products : activer “Share on LinkedIn” (post) et idéalement “Sign In with LinkedIn using OpenID Connect” (pour identifier le membre via <code>/userinfo</code>). Voir : <a href="<?php echo esc_url($link_docs_oidc); ?>" target="_blank" rel="noopener">doc OIDC</a>.</p>
 								</div>
 							</div>
-							<div class="pks-checkrow">
+							<div class="pks-checkrow pks-checkrow--wide">
 								<?php echo empty($opt['last_assets_error']) ? '<span class="pks-pill pks-pill--warn">À VALIDER</span>' : '<span class="pks-pill pks-pill--bad">BLOQUÉ</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 								<div>
 									<strong>Image obligatoire (Images API)</strong>
@@ -642,11 +670,12 @@ final class PKLIAP_Plugin {
 					<form method="post" action="options.php" class="pks-card pks-card--accent-ok pks-card--wide" id="pkliap_save_form_proxy">
 						<div class="pks-card-title">Publication</div>
 						<?php settings_fields('pkliap'); ?>
-						<table class="form-table" role="presentation">
+						<table class="form-table pks-publication-table" role="presentation">
+							<tbody class="pks-publication-grid">
 							<tr>
 								<th scope="row">Activer</th>
 								<td>
-									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[enabled]" value="1" <?php checked(1, (int)$opt['enabled']); ?>/> Publier automatiquement</label>
+									<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[enabled]" value="1" <?php checked(1, (int)$opt['enabled']); ?>/> Publier automatiquement</label>
 									<p class="description">Déclenchement lors du passage en statut <code>publish</code>.</p>
 								</td>
 							</tr>
@@ -664,65 +693,73 @@ final class PKLIAP_Plugin {
 							<tr>
 								<th scope="row">Lien</th>
 								<td>
-									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[use_wp_shortlink]" value="1" <?php checked(1, (int)$opt['use_wp_shortlink']); ?>/> Utiliser le shortlink WP</label><br/>
-									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[append_utm]" value="1" <?php checked(1, (int)$opt['append_utm']); ?>/> Ajouter des UTM</label>
+									<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[use_wp_shortlink]" value="1" <?php checked(1, (int)$opt['use_wp_shortlink']); ?>/> Utiliser le shortlink WP</label>
+									<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[append_utm]" value="1" <?php checked(1, (int)$opt['append_utm']); ?>/> Ajouter des UTM</label>
 									<p class="description">UTM: source <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_source]" value="<?php echo esc_attr($opt['utm_source']); ?>"/> medium <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_medium]" value="<?php echo esc_attr($opt['utm_medium']); ?>"/> campaign <input class="small-text" name="<?php echo esc_attr(self::OPT_KEY); ?>[utm_campaign]" value="<?php echo esc_attr($opt['utm_campaign']); ?>"/></p>
 								</td>
 							</tr>
 							<tr>
 								<th scope="row">Texte</th>
 								<td>
-									<p style="margin:0 0 6px;"><strong>Composition</strong></p>
-									<label style="display:block;margin:2px 0;">
-										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_title]" value="1" <?php checked(1, (int)$opt['include_title']); ?>/>
-										Inclure le titre
-									</label>
-									<label style="display:block;margin:2px 0;">
-										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_excerpt]" value="1" <?php checked(1, (int)$opt['include_excerpt']); ?>/>
-										Inclure l’extrait
-									</label>
-									<label style="display:block;margin:2px 0 10px;">
-										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_url]" value="1" <?php checked(1, (int)$opt['include_url']); ?>/>
-										Inclure l’URL
-									</label>
-									<label>Ordre du contenu<br/>
-										<select name="<?php echo esc_attr(self::OPT_KEY); ?>[content_order]">
-											<option value="title,excerpt,url" <?php selected('title,excerpt,url', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → Extrait → URL (actuel)</option>
-											<option value="title,url,excerpt" <?php selected('title,url,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → URL → Extrait</option>
-											<option value="url,title,excerpt" <?php selected('url,title,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>URL → Titre → Extrait</option>
-										</select>
-									</label>
-									<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label><br/>
-									<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
+									<div class="pks-text-grid">
+										<div class="pks-subbox">
+											<p class="pks-subtitle">Composition</p>
+											<label class="pks-inline">
+												<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_title]" value="1" <?php checked(1, (int)$opt['include_title']); ?>/>
+												Inclure le titre
+											</label>
+											<label class="pks-inline">
+												<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_excerpt]" value="1" <?php checked(1, (int)$opt['include_excerpt']); ?>/>
+												Inclure l’extrait
+											</label>
+											<label class="pks-inline">
+												<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_url]" value="1" <?php checked(1, (int)$opt['include_url']); ?>/>
+												Inclure l’URL
+											</label>
+										</div>
+										<div class="pks-subbox">
+											<p class="pks-subtitle">Ordre & Personnalisation</p>
+											<label>Ordre du contenu<br/>
+												<select name="<?php echo esc_attr(self::OPT_KEY); ?>[content_order]">
+													<option value="title,excerpt,url" <?php selected('title,excerpt,url', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → Extrait → URL (actuel)</option>
+													<option value="title,url,excerpt" <?php selected('title,url,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>Titre → URL → Extrait</option>
+													<option value="url,title,excerpt" <?php selected('url,title,excerpt', self::normalize_content_order((string)$opt['content_order'])); ?>>URL → Titre → Extrait</option>
+												</select>
+											</label>
+											<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label>
+											<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
+										</div>
+									</div>
 								</td>
 							</tr>
 							<tr>
 								<th scope="row">Anti-doublon</th>
 								<td>
-									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[only_once]" value="1" <?php checked(1, (int)$opt['only_once']); ?>/> Publier une seule fois</label><br/>
-									<label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[share_on_update]" value="1" <?php checked(1, (int)$opt['share_on_update']); ?>/> Republier lors d’une mise à jour</label>
+									<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[only_once]" value="1" <?php checked(1, (int)$opt['only_once']); ?>/> Publier une seule fois</label>
+									<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[share_on_update]" value="1" <?php checked(1, (int)$opt['share_on_update']); ?>/> Republier lors d’une mise à jour</label>
 								</td>
 							</tr>
 							<tr>
 								<th scope="row">Image</th>
 								<td>
 									<p style="margin:0 0 6px;"><strong>Mode média</strong></p>
-									<label style="display:block;margin:2px 0;">
+									<label class="pks-inline">
 										<input type="radio" name="<?php echo esc_attr(self::OPT_KEY); ?>[media_mode]" value="opengraph" <?php checked('opengraph', (string)$opt['media_mode']); ?>/>
 										Preview via URL (OpenGraph) — recommandé
 									</label>
 									<p class="description" style="margin-top:0;">LinkedIn génère l’image depuis <code>og:image</code> de ton article (pas besoin d’upload API).</p>
-									<label style="display:block;margin:8px 0 2px;">
+									<label class="pks-inline">
 										<input type="radio" name="<?php echo esc_attr(self::OPT_KEY); ?>[media_mode]" value="upload" <?php checked('upload', (string)$opt['media_mode']); ?>/>
 										Upload image mise en avant (Images API)
 									</label>
 									<p class="description" style="margin-top:0;">Upload via <code>rest/images</code>, puis création du post via <code>rest/posts</code>.</p>
-									<label style="display:block;margin-top:10px;">
+									<label class="pks-inline">
 										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[require_image]" value="1" <?php checked(1, (int)$opt['require_image']); ?>/>
 										Image obligatoire (si pas d’image/si upload refusé → erreur)
 									</label>
 								</td>
 							</tr>
+							</tbody>
 						</table>
 						<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
 					</form>
