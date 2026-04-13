@@ -610,7 +610,7 @@ final class PKLIAP_Plugin {
 									<td>
 										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_api_key]" value="<?php echo esc_attr((string)$opt['x_api_key']); ?>"/>
 										<p class="description" style="margin-top:6px;">
-											Obtenir la clé dans <a href="<?php echo esc_url($link_x_projects); ?>" target="_blank" rel="noopener">Projects &amp; Apps</a> → ton app → Keys and tokens.
+											Mettre ici la <strong>Consumer Key</strong> visible dans <a href="<?php echo esc_url($link_x_projects); ?>" target="_blank" rel="noopener">Projects &amp; Apps</a> → ton app → <strong>OAuth 1.0 Keys</strong>. Ne pas utiliser le Bearer Token ni le Client ID OAuth 2.0.
 										</p>
 									</td>
 								</tr>
@@ -619,7 +619,7 @@ final class PKLIAP_Plugin {
 									<td>
 										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_api_secret]" value="<?php echo esc_attr((string)$opt['x_api_secret']); ?>"/>
 										<p class="description" style="margin-top:6px;">
-											Même écran que l’API Key. Si absent, régénère le secret dans ton app X.
+											Mettre ici la <strong>Consumer Secret</strong> du bloc <strong>OAuth 1.0 Keys</strong>. Si le secret n’est plus affiché, régénérer la clé côté X puis la recoller ici.
 										</p>
 									</td>
 								</tr>
@@ -627,7 +627,16 @@ final class PKLIAP_Plugin {
 									<th scope="row">Callback URL</th>
 									<td>
 										<input class="regular-text" type="text" readonly value="<?php echo esc_attr($x_callback_uri); ?>"/>
-										<p class="description">À configurer dans ton app X OAuth 1.0a user context (User authentication settings).</p>
+										<p class="description">À copier dans X Developer → ton app → <strong>Edit settings</strong> :</p>
+										<p class="description" style="margin-top:6px;">
+											- <strong>App permissions</strong> : <code>Read and write</code><br/>
+											- <strong>Type of App</strong> : <code>Web App, Automated App or Bot</code><br/>
+											- <strong>Callback URI / Redirect URL</strong> : cette URL exacte<br/>
+											- <strong>Website URL</strong> : l’URL publique de ton site
+										</p>
+										<p class="description" style="margin-top:6px;">
+											Erreur fréquente : si l’app est en <code>Native App</code>, X renvoie <code>Desktop applications only support the oauth_callback value 'oob'</code>. Il faut impérativement choisir <code>Web App, Automated App or Bot</code>.
+										</p>
 										<p class="description" style="margin-top:6px;">
 											Docs OAuth: <a href="<?php echo esc_url($link_x_oauth_docs); ?>" target="_blank" rel="noopener">Obtaining user access tokens</a>.<br/>
 											Portail dev: <a href="<?php echo esc_url($link_x_developer); ?>" target="_blank" rel="noopener">Developer Dashboard</a>.
@@ -640,6 +649,9 @@ final class PKLIAP_Plugin {
 
 						<div class="pks-card pks-card--accent-purple">
 							<div class="pks-card-title">Compte X (qui poste)</div>
+							<p class="pks-info" style="margin:-4px 0 12px;">
+								Après enregistrement des clés, cliquer sur <strong>Connecter / Reconnecter</strong> pour autoriser le compte X qui publiera. Le plugin récupère ensuite automatiquement le token utilisateur OAuth 1.0a.
+							</p>
 							<div class="pks-actions-row" style="margin:-6px 0 12px;">
 								<?php echo $x_connected ? '<span class="pks-pill pks-pill--ok">Connecté</span>' : '<span class="pks-pill pks-pill--bad">Non connecté</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 								<?php if (!empty($opt['x_screen_name'])): ?>
