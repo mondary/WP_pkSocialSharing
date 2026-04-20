@@ -2,8 +2,9 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.48
- * Author: PK
+ * Version: 0.51
+ * Author: cmondary
+ * Author URI: https://github.com/mondary
  * Requires at least: 6.0
  * Requires PHP: 7.4
  */
@@ -33,6 +34,7 @@ final class PKLIAP_Plugin {
 	public static function init(): void {
 		add_action('admin_menu', [__CLASS__, 'admin_menu']);
 		add_action('admin_init', [__CLASS__, 'register_settings']);
+		add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_plugins_icon']);
 		add_action('rest_api_init', [__CLASS__, 'register_rest_routes']);
 
 		add_action('admin_post_pkliap_connect', [__CLASS__, 'handle_connect']);
@@ -45,6 +47,37 @@ final class PKLIAP_Plugin {
 		add_action('admin_post_pkliap_x_disconnect', [__CLASS__, 'handle_x_disconnect']);
 
 		add_action('transition_post_status', [__CLASS__, 'on_transition_post_status'], 10, 3);
+		add_action('pkliap_async_share_task', [__CLASS__, 'do_async_share'], 10, 1);
+	}
+
+	public static function enqueue_plugins_icon(string $hook): void {
+		if ($hook !== 'plugins.php') {
+			return;
+		}
+
+		$icon_rel = is_readable(plugin_dir_path(__FILE__) . 'icon.png') ? 'icon.png' : '';
+		if ($icon_rel === '') {
+			return;
+		}
+
+		$icon_url = plugins_url($icon_rel, __FILE__);
+		$plugin_basename = plugin_basename(__FILE__);
+		$handle = 'pkliap-plugins';
+
+		wp_register_style($handle, false, [], self::get_plugin_version());
+		wp_enqueue_style($handle);
+
+		$row_sel = 'tr[data-plugin="' . esc_attr($plugin_basename) . '"]';
+		$css = $row_sel . ' .plugin-icon{'
+			. 'background-image:url("' . esc_url($icon_url) . '") !important;'
+			. 'background-repeat:no-repeat !important;'
+			. 'background-position:center !important;'
+			. 'background-size:contain !important;'
+			. 'color:transparent !important;}'
+			. $row_sel . ' .plugin-icon img{opacity:0 !important;}'
+			. $row_sel . ' .plugin-icon svg{opacity:0 !important;}';
+
+		wp_add_inline_style($handle, $css);
 	}
 
 	public static function register_rest_routes(): void {
@@ -253,11 +286,25 @@ final class PKLIAP_Plugin {
 			'x_access_token_secret' => '',
 			'x_user_id' => '',
 			'x_screen_name' => '',
+			'x_prefix' => '',
+			'x_suffix' => '',
+			'x_include_title' => 1,
+			'x_include_excerpt' => 1,
+			'x_include_url' => 1,
+			'x_content_order' => '',
+			'x_text_template' => '',
 			'last_x_error' => '',
 			'last_x_error_at' => 0,
 			'fb_enabled' => 0,
 			'fb_page_id' => '',
 			'fb_access_token' => '',
+			'fb_prefix' => '',
+			'fb_suffix' => '',
+			'fb_include_title' => 1,
+			'fb_include_excerpt' => 1,
+			'fb_include_url' => 1,
+			'fb_content_order' => '',
+			'fb_text_template' => '',
 			'last_fb_error' => '',
 			'last_fb_error_at' => 0,
 			'ig_enabled' => 0,
@@ -384,9 +431,35 @@ final class PKLIAP_Plugin {
 		$out['x_access_token_secret'] = array_key_exists('x_access_token_secret', $value) ? sanitize_text_field((string)$value['x_access_token_secret']) : (string)$current['x_access_token_secret'];
 		$out['x_user_id'] = array_key_exists('x_user_id', $value) ? sanitize_text_field((string)$value['x_user_id']) : (string)$current['x_user_id'];
 		$out['x_screen_name'] = array_key_exists('x_screen_name', $value) ? sanitize_text_field((string)$value['x_screen_name']) : (string)$current['x_screen_name'];
+		$out['x_prefix'] = array_key_exists('x_prefix', $value) ? sanitize_text_field((string)$value['x_prefix']) : (string)$current['x_prefix'];
+		$out['x_suffix'] = array_key_exists('x_suffix', $value) ? sanitize_text_field((string)$value['x_suffix']) : (string)$current['x_suffix'];
+		$out['x_include_title'] = array_key_exists('x_include_title', $value) ? (empty($value['x_include_title']) ? 0 : 1) : (int)$current['x_include_title'];
+		$out['x_include_excerpt'] = array_key_exists('x_include_excerpt', $value) ? (empty($value['x_include_excerpt']) ? 0 : 1) : (int)$current['x_include_excerpt'];
+		$out['x_include_url'] = array_key_exists('x_include_url', $value) ? (empty($value['x_include_url']) ? 0 : 1) : (int)$current['x_include_url'];
+		if (array_key_exists('x_content_order', $value)) {
+			$x_order = trim((string)$value['x_content_order']);
+			$out['x_content_order'] = ($x_order === '') ? '' : self::normalize_content_order($x_order);
+		} else {
+			$current_x_order = trim((string)$current['x_content_order']);
+			$out['x_content_order'] = ($current_x_order === '') ? '' : self::normalize_content_order($current_x_order);
+		}
+		$out['x_text_template'] = array_key_exists('x_text_template', $value) ? sanitize_textarea_field((string)$value['x_text_template']) : (string)$current['x_text_template'];
 		$out['fb_enabled'] = array_key_exists('fb_enabled', $value) ? (empty($value['fb_enabled']) ? 0 : 1) : (int)$current['fb_enabled'];
 		$out['fb_page_id'] = array_key_exists('fb_page_id', $value) ? sanitize_text_field((string)$value['fb_page_id']) : (string)$current['fb_page_id'];
 		$out['fb_access_token'] = array_key_exists('fb_access_token', $value) ? sanitize_text_field((string)$value['fb_access_token']) : (string)$current['fb_access_token'];
+		$out['fb_prefix'] = array_key_exists('fb_prefix', $value) ? sanitize_text_field((string)$value['fb_prefix']) : (string)$current['fb_prefix'];
+		$out['fb_suffix'] = array_key_exists('fb_suffix', $value) ? sanitize_text_field((string)$value['fb_suffix']) : (string)$current['fb_suffix'];
+		$out['fb_include_title'] = array_key_exists('fb_include_title', $value) ? (empty($value['fb_include_title']) ? 0 : 1) : (int)$current['fb_include_title'];
+		$out['fb_include_excerpt'] = array_key_exists('fb_include_excerpt', $value) ? (empty($value['fb_include_excerpt']) ? 0 : 1) : (int)$current['fb_include_excerpt'];
+		$out['fb_include_url'] = array_key_exists('fb_include_url', $value) ? (empty($value['fb_include_url']) ? 0 : 1) : (int)$current['fb_include_url'];
+		if (array_key_exists('fb_content_order', $value)) {
+			$fb_order = trim((string)$value['fb_content_order']);
+			$out['fb_content_order'] = ($fb_order === '') ? '' : self::normalize_content_order($fb_order);
+		} else {
+			$current_fb_order = trim((string)$current['fb_content_order']);
+			$out['fb_content_order'] = ($current_fb_order === '') ? '' : self::normalize_content_order($current_fb_order);
+		}
+		$out['fb_text_template'] = array_key_exists('fb_text_template', $value) ? sanitize_textarea_field((string)$value['fb_text_template']) : (string)$current['fb_text_template'];
 		$out['ig_enabled'] = array_key_exists('ig_enabled', $value) ? (empty($value['ig_enabled']) ? 0 : 1) : (int)$current['ig_enabled'];
 		$out['ig_user_id'] = array_key_exists('ig_user_id', $value) ? sanitize_text_field((string)$value['ig_user_id']) : (string)$current['ig_user_id'];
 		$out['ig_access_token'] = array_key_exists('ig_access_token', $value) ? sanitize_text_field((string)$value['ig_access_token']) : (string)$current['ig_access_token'];
@@ -465,17 +538,92 @@ final class PKLIAP_Plugin {
 		$has_client_secret = !empty($opt['client_secret']);
 		$redirect_is_recommended = ($config_redirect_uri === $recommended_redirect_uri);
 		$has_author_urn = !empty($opt['author_urn']);
-		$active_network = isset($_GET['network']) ? sanitize_key((string)wp_unslash($_GET['network'])) : 'linkedin';
-		if (!in_array($active_network, ['linkedin', 'x', 'facebook', 'instagram'], true)) {
-			$active_network = 'linkedin';
+		$active_network = isset($_GET['network']) ? sanitize_key((string)wp_unslash($_GET['network'])) : 'dashboard';
+		if (!in_array($active_network, ['dashboard', 'linkedin', 'x', 'facebook', 'instagram'], true)) {
+			$active_network = 'dashboard';
 		}
 		$settings_base_url = menu_page_url('pk-socialsharing', false);
-		$link_tab_linkedin = remove_query_arg('network', $settings_base_url);
+		$link_tab_dashboard = remove_query_arg('network', $settings_base_url);
+		$link_tab_linkedin = add_query_arg('network', 'linkedin', $settings_base_url);
 		$link_tab_x = add_query_arg('network', 'x', $settings_base_url);
 		$link_tab_facebook = add_query_arg('network', 'facebook', $settings_base_url);
 		$link_tab_instagram = add_query_arg('network', 'instagram', $settings_base_url);
 		$x_callback_uri = self::admin_url_action('pkliap_x_oauth_callback');
 		$x_connected = (!empty($opt['x_access_token']) && !empty($opt['x_access_token_secret']));
+
+		$linkedin_connected = ($has_token && $has_author_urn);
+		$fb_connected = (!empty($opt['fb_page_id']) && !empty($opt['fb_access_token']));
+		$ig_connected = (!empty($opt['ig_user_id']) && !empty($opt['ig_access_token']));
+
+		$tz = function_exists('wp_timezone') ? wp_timezone() : new DateTimeZone('UTC');
+		$today_start = (new DateTimeImmutable('today', $tz))->getTimestamp();
+		$today_end = (new DateTimeImmutable('tomorrow', $tz))->getTimestamp() - 1;
+		$today_label = wp_date('Y-m-d', $today_start);
+
+		$whitelist = array_values(array_filter((array)($opt['post_type_whitelist'] ?? [])));
+		$planned_post_ids = [];
+		if ($whitelist) {
+			$planned_q = new WP_Query([
+				'post_type' => $whitelist,
+				'post_status' => 'publish',
+				'fields' => 'ids',
+				'posts_per_page' => -1,
+				'no_found_rows' => true,
+				'date_query' => [[
+					'after' => wp_date('Y-m-d 00:00:00', $today_start),
+					'before' => wp_date('Y-m-d 23:59:59', $today_start),
+					'inclusive' => true,
+				]],
+			]);
+			$planned_post_ids = is_array($planned_q->posts) ? array_map('intval', $planned_q->posts) : [];
+		}
+
+		$net_cfg = [
+			'linkedin' => ['label' => 'LinkedIn',  'enabled' => !empty($opt['enabled']),    'connected' => $linkedin_connected, 'meta' => self::META_SHARED_AT,    'err_key' => 'last_share_error'],
+			'x'        => ['label' => 'X',         'enabled' => !empty($opt['x_enabled']),  'connected' => $x_connected,        'meta' => self::META_X_SHARED_AT,  'err_key' => 'last_x_error'],
+			'facebook' => ['label' => 'Facebook',  'enabled' => !empty($opt['fb_enabled']), 'connected' => $fb_connected,       'meta' => self::META_FB_SHARED_AT, 'err_key' => 'last_fb_error'],
+			'instagram'=> ['label' => 'Instagram', 'enabled' => !empty($opt['ig_enabled']), 'connected' => $ig_connected,       'meta' => self::META_IG_SHARED_AT, 'err_key' => 'last_ig_error'],
+		];
+		$planned_by_net = [];
+		$done_by_net = [];
+		$failed_by_net = [];
+		foreach ($net_cfg as $net => $cfg) {
+			$planned_by_net[$net] = $cfg['enabled'] ? count($planned_post_ids) : 0;
+
+			$done_q = new WP_Query([
+				'post_type' => 'any',
+				'post_status' => 'publish',
+				'fields' => 'ids',
+				'posts_per_page' => -1,
+				'no_found_rows' => true,
+				'meta_query' => [[
+					'key' => $cfg['meta'],
+					'value' => [$today_start, $today_end],
+					'compare' => 'BETWEEN',
+					'type' => 'NUMERIC',
+				]],
+			]);
+			$done_by_net[$net] = is_array($done_q->posts) ? count($done_q->posts) : 0;
+			$failed_by_net[$net] = 0;
+		}
+
+		$debug_log = is_array($opt['debug_log']) ? $opt['debug_log'] : [];
+		foreach ($debug_log as $entry) {
+			$ts = (int)($entry['ts'] ?? 0);
+			if ($ts < $today_start || $ts > $today_end) {
+				continue;
+			}
+			$msg = (string)($entry['message'] ?? '');
+			if (strpos($msg, 'Auto share') === false || strpos($msg, ' failed ') === false) {
+				continue;
+			}
+			if (preg_match('/Auto share ([a-z]+) failed /', $msg, $m)) {
+				$net = (string)$m[1];
+				if (array_key_exists($net, $failed_by_net)) {
+					$failed_by_net[$net]++;
+				}
+			}
+		}
 
 		?>
 		<div class="wrap">
@@ -581,6 +729,10 @@ final class PKLIAP_Plugin {
 
 			<div class="pks-modern">
 				<div class="pks-network-tabs" role="tablist" aria-label="Réseaux sociaux">
+					<a class="pks-network-tab <?php echo $active_network === 'dashboard' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_dashboard); ?>" role="tab" aria-selected="<?php echo $active_network === 'dashboard' ? 'true' : 'false'; ?>">
+						Dashboard
+						<span class="pks-network-pill">Jour</span>
+					</a>
 					<a class="pks-network-tab <?php echo $active_network === 'linkedin' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_linkedin); ?>" role="tab" aria-selected="<?php echo $active_network === 'linkedin' ? 'true' : 'false'; ?>">
 						LinkedIn
 						<span class="pks-network-pill">Actif</span>
@@ -599,7 +751,117 @@ final class PKLIAP_Plugin {
 					</a>
 				</div>
 
-				<?php if ($active_network === 'x'): ?>
+				<?php if ($active_network === 'dashboard'): ?>
+					<div class="pks-grid">
+						<div class="pks-card pks-card--accent-blue pks-card--wide">
+							<div class="pks-card-title">Récap du <?php echo esc_html($today_label); ?></div>
+							<p class="pks-info" style="margin:-4px 0 12px;">
+								Planifié = articles publiés aujourd’hui sur les types autorisés. Effectué = partages réalisés aujourd’hui (selon les metas <code>_pkliap_*_shared_at</code>).
+							</p>
+							<table class="widefat striped" style="width:100%;border-collapse:collapse;">
+								<thead>
+									<tr>
+										<th>Réseau</th>
+										<th>Planifié</th>
+										<th>Effectué</th>
+										<th>Échecs (log)</th>
+										<th>Connexion</th>
+									</tr>
+								</thead>
+								<tbody>
+									<?php foreach ($net_cfg as $net => $cfg): ?>
+										<?php
+										$planned = (int)($planned_by_net[$net] ?? 0);
+										$done = (int)($done_by_net[$net] ?? 0);
+										$failed = (int)($failed_by_net[$net] ?? 0);
+										$connected = !empty($cfg['connected']);
+										$enabled = !empty($cfg['enabled']);
+										?>
+										<tr>
+											<td><strong><?php echo esc_html((string)$cfg['label']); ?></strong> <?php echo $enabled ? '<span class="pks-pill pks-pill--ok">AUTO</span>' : '<span class="pks-pill pks-pill--warn">OFF</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											<td><?php echo esc_html((string)$planned); ?></td>
+											<td><?php echo esc_html((string)$done); ?></td>
+											<td><?php echo esc_html((string)$failed); ?></td>
+											<td><?php echo $connected ? '<span class="pks-pill pks-pill--ok">Connecté</span>' : '<span class="pks-pill pks-pill--bad">Non connecté</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+										</tr>
+									<?php endforeach; ?>
+								</tbody>
+							</table>
+							<p class="description" style="margin:10px 0 0;">
+								Types autorisés aujourd’hui: <code><?php echo esc_html($whitelist ? implode(',', $whitelist) : '—'); ?></code> — articles trouvés: <strong><?php echo esc_html((string)count($planned_post_ids)); ?></strong>.
+							</p>
+						</div>
+
+						<div class="pks-card pks-card--accent-purple">
+							<div class="pks-card-title">Statut des connexions</div>
+							<div class="pks-checklist">
+								<div class="pks-checkrow">
+									<span class="pks-pill <?php echo $linkedin_connected ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $linkedin_connected ? 'OK' : 'KO'; ?></span>
+									<div>
+										<strong>LinkedIn</strong>
+										<p><?php echo $linkedin_connected ? 'Token valide + Author URN renseigné.' : 'Token manquant/expiré ou Author URN manquant.'; ?></p>
+									</div>
+								</div>
+								<div class="pks-checkrow">
+									<span class="pks-pill <?php echo $x_connected ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $x_connected ? 'OK' : 'KO'; ?></span>
+									<div>
+										<strong>X</strong>
+										<p><?php echo $x_connected ? 'Token utilisateur OAuth 1.0a présent.' : 'Compte non connecté (token manquant).'; ?></p>
+									</div>
+								</div>
+								<div class="pks-checkrow">
+									<span class="pks-pill <?php echo $fb_connected ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $fb_connected ? 'OK' : 'KO'; ?></span>
+									<div>
+										<strong>Facebook</strong>
+										<p><?php echo $fb_connected ? 'Page ID + Access Token renseignés.' : 'Page ID ou Access Token manquant.'; ?></p>
+									</div>
+								</div>
+								<div class="pks-checkrow">
+									<span class="pks-pill <?php echo $ig_connected ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $ig_connected ? 'OK' : 'KO'; ?></span>
+									<div>
+										<strong>Instagram</strong>
+										<p><?php echo $ig_connected ? 'User ID + Access Token renseignés.' : 'User ID ou Access Token manquant.'; ?></p>
+									</div>
+								</div>
+							</div>
+						</div>
+
+						<div class="pks-card pks-card--accent-warn">
+							<div class="pks-card-title">Dernières erreurs</div>
+							<?php
+							$errs = [];
+							foreach ($net_cfg as $net => $cfg) {
+								$k = (string)$cfg['err_key'];
+								$ka = $k . '_at';
+								$msg = (string)($opt[$k] ?? '');
+								$at = (int)($opt[$ka] ?? 0);
+								if ($msg) {
+									$errs[] = [
+										'net' => (string)$cfg['label'],
+										'msg' => $msg,
+										'at' => $at,
+									];
+								}
+							}
+							usort($errs, fn($a, $b) => (int)$b['at'] <=> (int)$a['at']);
+							?>
+							<?php if (!$errs): ?>
+								<p class="pks-info" style="margin:0;">Aucune erreur enregistrée.</p>
+							<?php else: ?>
+								<ul style="margin:0;padding-left:18px;">
+									<?php foreach (array_slice($errs, 0, 8) as $e): ?>
+										<li>
+											<strong><?php echo esc_html((string)$e['net']); ?></strong> — <?php echo esc_html((string)$e['msg']); ?>
+											<?php if (!empty($e['at'])): ?>
+												<span class="description"> (<?php echo esc_html(wp_date('Y-m-d H:i', (int)$e['at'])); ?>)</span>
+											<?php endif; ?>
+										</li>
+									<?php endforeach; ?>
+								</ul>
+							<?php endif; ?>
+						</div>
+					</div>
+				<?php elseif ($active_network === 'x'): ?>
 					<div class="pks-grid">
 						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
 							<div class="pks-card-title">X Developer (App)</div>
@@ -689,8 +951,42 @@ final class PKLIAP_Plugin {
 								<span class="pks-pill pks-pill--ok">AUTO</span>
 								<div>
 									<strong>Activer</strong>
-									<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_enabled]" value="1" <?php checked(1, (int)$opt['x_enabled']); ?>/> Publier automatiquement sur X</label>
-									<p>Le texte utilise les réglages globaux: Préfixe / Suffixe / Template avancé.</p>
+									<label class="pks-inline"><input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_enabled]" value="0"/><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_enabled]" value="1" <?php checked(1, (int)$opt['x_enabled']); ?>/> Publier automatiquement sur X</label>
+									<p>Le texte peut utiliser les réglages dédiés X ci-dessous, avec fallback sur LinkedIn si tu laisses les champs vides.</p>
+								</div>
+							</div>
+							<div class="pks-checkrow" style="margin-top:12px;">
+								<span class="pks-pill pks-pill--ok">TEXTE</span>
+								<div style="width:100%;">
+									<strong>Personnalisation X</strong>
+									<p class="pks-info" style="margin:4px 0 10px;">Laisse vide pour reprendre les réglages LinkedIn. Tu peux définir un ordre différent, par exemple sans URL en premier.</p>
+									<div class="pks-subbox">
+										<p class="pks-subtitle">Composition</p>
+										<label class="pks-inline">
+											<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_title]" value="0"/>
+											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_title]" value="1" <?php checked(1, (int)$opt['x_include_title']); ?>/>
+											Inclure le titre
+										</label>
+										<label class="pks-inline">
+											<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_excerpt]" value="0"/>
+											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_excerpt]" value="1" <?php checked(1, (int)$opt['x_include_excerpt']); ?>/>
+											Inclure l’extrait
+										</label>
+										<label class="pks-inline">
+											<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_url]" value="0"/>
+											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_url]" value="1" <?php checked(1, (int)$opt['x_include_url']); ?>/>
+											Inclure l’URL
+										</label>
+										<label>Ordre du contenu<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_content_order]" value="<?php echo esc_attr((string)$opt['x_content_order']); ?>" placeholder="title,excerpt,url"/></label>
+										<p class="description" style="margin:4px 0 0;">Exemples: <code>title,excerpt,url</code> ou <code>title,url</code>. Laisser vide = ordre LinkedIn.</p>
+										<p class="pks-subtitle" style="margin-top:12px;">Personnalisation</p>
+										<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_prefix]" value="<?php echo esc_attr((string)$opt['x_prefix']); ?>"/></label>
+										<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_suffix]" value="<?php echo esc_attr((string)$opt['x_suffix']); ?>"/></label>
+										<label>Template avancé (optionnel)<br/>
+											<textarea class="large-text code" rows="4" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_text_template]" placeholder="{title}{br2}{excerpt}{br2}{url}"><?php echo esc_textarea((string)$opt['x_text_template']); ?></textarea>
+										</label>
+										<p class="description" style="margin:4px 0 0;">Variables: <code>{prefix}</code>, <code>{title}</code>, <code>{excerpt}</code>, <code>{url}</code>, <code>{suffix}</code>. Sauts: <code>{br}</code>, <code>{br2}</code>. Laisser vide = template LinkedIn.</p>
+									</div>
 								</div>
 							</div>
 							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
@@ -777,8 +1073,42 @@ final class PKLIAP_Plugin {
 						<form method="post" action="options.php" class="pks-card pks-card--accent-ok">
 							<div class="pks-card-title">Publication Facebook</div>
 							<?php settings_fields('pkliap'); ?>
-							<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_enabled]" value="1" <?php checked(1, (int)$opt['fb_enabled']); ?>/> Publier automatiquement sur Facebook</label>
+							<label class="pks-inline"><input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_enabled]" value="0"/><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_enabled]" value="1" <?php checked(1, (int)$opt['fb_enabled']); ?>/> Publier automatiquement sur Facebook</label>
 							<p class="pks-info" style="margin:8px 0 0;">Publication via <code>/{page-id}/feed</code> (message + lien).</p>
+							<div class="pks-checkrow" style="margin-top:12px;">
+								<span class="pks-pill pks-pill--ok">TEXTE</span>
+								<div style="width:100%;">
+									<strong>Personnalisation Facebook</strong>
+									<p class="pks-info" style="margin:4px 0 10px;">Réglages dédiés à Facebook. Laisse vide pour reprendre la configuration LinkedIn.</p>
+									<div class="pks-subbox">
+										<p class="pks-subtitle">Composition</p>
+										<label class="pks-inline">
+											<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_include_title]" value="0"/>
+											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_include_title]" value="1" <?php checked(1, (int)$opt['fb_include_title']); ?>/>
+											Inclure le titre
+										</label>
+										<label class="pks-inline">
+											<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_include_excerpt]" value="0"/>
+											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_include_excerpt]" value="1" <?php checked(1, (int)$opt['fb_include_excerpt']); ?>/>
+											Inclure l’extrait
+										</label>
+										<label class="pks-inline">
+											<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_include_url]" value="0"/>
+											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_include_url]" value="1" <?php checked(1, (int)$opt['fb_include_url']); ?>/>
+											Inclure l’URL
+										</label>
+										<label>Ordre du contenu<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_content_order]" value="<?php echo esc_attr((string)$opt['fb_content_order']); ?>" placeholder="title,excerpt,url"/></label>
+										<p class="description" style="margin:4px 0 0;">Exemples: <code>title,excerpt,url</code> ou <code>title,excerpt</code>. Laisser vide = ordre LinkedIn.</p>
+										<p class="pks-subtitle" style="margin-top:12px;">Personnalisation</p>
+										<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_prefix]" value="<?php echo esc_attr((string)$opt['fb_prefix']); ?>"/></label>
+										<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_suffix]" value="<?php echo esc_attr((string)$opt['fb_suffix']); ?>"/></label>
+										<label>Template avancé (optionnel)<br/>
+											<textarea class="large-text code" rows="4" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_text_template]" placeholder="{title}{br2}{excerpt}{br2}{url}"><?php echo esc_textarea((string)$opt['fb_text_template']); ?></textarea>
+										</label>
+										<p class="description" style="margin:4px 0 0;">Variables: <code>{prefix}</code>, <code>{title}</code>, <code>{excerpt}</code>, <code>{url}</code>, <code>{suffix}</code>. Sauts: <code>{br}</code>, <code>{br2}</code>. Laisser vide = template LinkedIn.</p>
+									</div>
+								</div>
+							</div>
 							<?php if (!empty($opt['last_fb_error'])): ?>
 								<p class="description" style="color:#b32d2e;">Dernière erreur Facebook: <?php echo esc_html((string)$opt['last_fb_error']); ?></p>
 							<?php endif; ?>
@@ -848,16 +1178,37 @@ final class PKLIAP_Plugin {
 							<table class="form-table" role="presentation">
 								<tr>
 									<th scope="row">IG User ID</th>
-									<td><input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[ig_user_id]" value="<?php echo esc_attr((string)$opt['ig_user_id']); ?>"/></td>
+									<td>
+										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[ig_user_id]" value="<?php echo esc_attr((string)$opt['ig_user_id']); ?>"/>
+										<p class="description" style="margin-top:6px;">
+											Récupérer l’ID via le Graph API Explorer avec le token Meta, en lisant la Page liée : <code>/&lt;page-id&gt;?fields=instagram_business_account{id,username}</code>. La valeur attendue ici est <code>instagram_business_account.id</code>.
+										</p>
+									</td>
 								</tr>
 								<tr>
 									<th scope="row">Access Token</th>
 									<td>
 										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[ig_access_token]" value="<?php echo esc_attr((string)$opt['ig_access_token']); ?>"/>
-										<p class="description">Token Meta avec permissions Instagram publishing.</p>
+										<p class="description">Token Meta avec permissions Instagram publishing. Le plus simple est de réutiliser le token Meta généré pour Facebook si ce token contient aussi les permissions Instagram.</p>
+										<p class="description" style="margin-top:6px;">
+											Permissions minimales à demander : <code>instagram_basic</code>, <code>instagram_content_publish</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>. Selon la config Meta, <code>pages_manage_metadata</code> peut aussi être nécessaire pour remonter correctement le compte Instagram lié à la Page.
+										</p>
 									</td>
 								</tr>
 							</table>
+							<div class="pks-checkrow" style="margin-top:12px;">
+								<span class="pks-pill pks-pill--ok">SETUP</span>
+								<div>
+									<strong>Pas-à-pas Instagram</strong>
+									<p>1. Passer le compte Instagram en compte professionnel (Business ou Creator).</p>
+									<p>2. Lier ce compte Instagram à une Page Facebook que tu gères.</p>
+									<p>3. Dans Meta Developers, activer le cas d’usage <strong>Gérer les messages et les contenus sur Instagram</strong>.</p>
+									<p>4. Dans Graph API Explorer, générer un <strong>User Access Token</strong> avec les permissions Instagram + Pages.</p>
+									<p>5. Vérifier la Page liée avec <code>/me/accounts?fields=id,name,instagram_business_account{id,username}</code>.</p>
+									<p>6. Si <code>instagram_business_account</code> apparaît, copier son <code>id</code> dans <strong>IG User ID</strong>.</p>
+									<p>7. Réutiliser le token Meta dans <strong>Access Token</strong>, enregistrer, puis tester avec <strong>Publier maintenant</strong>.</p>
+								</div>
+							</div>
 							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
 						</form>
 
@@ -1756,117 +2107,45 @@ final class PKLIAP_Plugin {
 			return;
 		}
 
-		if (!empty($opt['enabled'])) {
-			try {
-				$res = self::share_post_to_linkedin($post->ID, false);
-			} catch (Throwable $e) {
-				$msg = 'Exception PHP LinkedIn: ' . get_class($e) . ' - ' . $e->getMessage();
-				self::update_options([
-					'last_share_error' => $msg,
-					'last_share_error_at' => time(),
-				]);
-				self::debug_log_event($msg);
-				self::debug_log_event($e->getTraceAsString());
-				$res = new WP_Error('pkliap_exception', $msg);
-			}
-			if (is_wp_error($res)) {
-				self::update_options([
-					'last_share_error' => $res->get_error_message(),
-					'last_share_error_at' => time(),
-				]);
-				self::debug_log_event('Auto share LinkedIn failed for post #' . $post->ID . ': ' . $res->get_error_message());
-			} else {
-				self::update_options([
-					'last_share_error' => '',
-					'last_share_error_at' => 0,
-				]);
-				self::debug_log_event('Auto share LinkedIn success for post #' . $post->ID . '.');
-			}
-		}
+		// On planifie l'exécution immédiate en arrière-plan
+		wp_schedule_single_event(time(), 'pkliap_async_share_task', [$post->ID]);
+	}
 
-		if (!empty($opt['x_enabled'])) {
-			try {
-				$xres = self::share_post_to_x($post->ID, false);
-			} catch (Throwable $e) {
-				$msg = 'Exception PHP X: ' . get_class($e) . ' - ' . $e->getMessage();
-				self::update_options([
-					'last_x_error' => $msg,
-					'last_x_error_at' => time(),
-				]);
-				self::debug_log_event($msg);
-				self::debug_log_event($e->getTraceAsString());
-				$xres = new WP_Error('pkliap_exception_x', $msg);
-			}
-			if (is_wp_error($xres)) {
-				self::update_options([
-					'last_x_error' => $xres->get_error_message(),
-					'last_x_error_at' => time(),
-				]);
-				self::debug_log_event('Auto share X failed for post #' . $post->ID . ': ' . $xres->get_error_message());
-			} else {
-				self::update_options([
-					'last_x_error' => '',
-					'last_x_error_at' => 0,
-				]);
-				self::debug_log_event('Auto share X success for post #' . $post->ID . '.');
-			}
-		}
+	/**
+	 * Exécute le partage de manière asynchrone (appelé par le CRON)
+	 */
+	public static function do_async_share(int $post_id): void {
+		$opt = self::get_options();
+		$networks = [
+			'linkedin'  => ['enabled' => !empty($opt['enabled']),    'callback' => 'share_post_to_linkedin',  'err_key' => 'last_share_error'],
+			'x'         => ['enabled' => !empty($opt['x_enabled']),  'callback' => 'share_post_to_x',         'err_key' => 'last_x_error'],
+			'facebook'  => ['enabled' => !empty($opt['fb_enabled']), 'callback' => 'share_post_to_facebook',  'err_key' => 'last_fb_error'],
+			'instagram' => ['enabled' => !empty($opt['ig_enabled']), 'callback' => 'share_post_to_instagram', 'err_key' => 'last_ig_error'],
+		];
 
-		if (!empty($opt['fb_enabled'])) {
-			try {
-				$fbres = self::share_post_to_facebook($post->ID, false);
-			} catch (Throwable $e) {
-				$msg = 'Exception PHP Facebook: ' . get_class($e) . ' - ' . $e->getMessage();
-				self::update_options([
-					'last_fb_error' => $msg,
-					'last_fb_error_at' => time(),
-				]);
-				self::debug_log_event($msg);
-				self::debug_log_event($e->getTraceAsString());
-				$fbres = new WP_Error('pkliap_exception_fb', $msg);
-			}
-			if (is_wp_error($fbres)) {
-				self::update_options([
-					'last_fb_error' => $fbres->get_error_message(),
-					'last_fb_error_at' => time(),
-				]);
-				self::debug_log_event('Auto share Facebook failed for post #' . $post->ID . ': ' . $fbres->get_error_message());
-			} else {
-				self::update_options([
-					'last_fb_error' => '',
-					'last_fb_error_at' => 0,
-				]);
-				self::debug_log_event('Auto share Facebook success for post #' . $post->ID . '.');
-			}
-		}
+		foreach ($networks as $net => $cfg) {
+			if (!$cfg['enabled']) continue;
 
-		if (!empty($opt['ig_enabled'])) {
 			try {
-				$igres = self::share_post_to_instagram($post->ID, false);
+				$res = call_user_func([__CLASS__, $cfg['callback']], $post_id, false);
+				if (is_wp_error($res)) {
+					self::handle_share_error($net, $post_id, $res->get_error_message(), $cfg['err_key']);
+				} else {
+					self::update_options([$cfg['err_key'] => '', $cfg['err_key'] . '_at' => 0]);
+					self::debug_log_event("Auto share $net success for post #$post_id.");
+				}
 			} catch (Throwable $e) {
-				$msg = 'Exception PHP Instagram: ' . get_class($e) . ' - ' . $e->getMessage();
-				self::update_options([
-					'last_ig_error' => $msg,
-					'last_ig_error_at' => time(),
-				]);
-				self::debug_log_event($msg);
-				self::debug_log_event($e->getTraceAsString());
-				$igres = new WP_Error('pkliap_exception_ig', $msg);
-			}
-			if (is_wp_error($igres)) {
-				self::update_options([
-					'last_ig_error' => $igres->get_error_message(),
-					'last_ig_error_at' => time(),
-				]);
-				self::debug_log_event('Auto share Instagram failed for post #' . $post->ID . ': ' . $igres->get_error_message());
-			} else {
-				self::update_options([
-					'last_ig_error' => '',
-					'last_ig_error_at' => 0,
-				]);
-				self::debug_log_event('Auto share Instagram success for post #' . $post->ID . '.');
+				self::handle_share_error($net, $post_id, $e->getMessage(), $cfg['err_key']);
 			}
 		}
+	}
+
+	private static function handle_share_error(string $net, int $post_id, string $msg, string $err_key): void {
+		self::update_options([
+			$err_key => $msg,
+			$err_key . '_at' => time(),
+		]);
+		self::debug_log_event("Auto share $net failed for post #$post_id: $msg");
 	}
 
 	/** @return array|WP_Error */
@@ -2213,63 +2492,92 @@ final class PKLIAP_Plugin {
 	}
 
 	private static function build_linkedin_text(int $post_id, array $opt, string $link): string {
+		return self::build_network_text($post_id, $opt, $link, '', 2800);
+	}
+
+	private static function build_x_text(int $post_id, array $opt, string $link): string {
+		return self::build_network_text($post_id, $opt, $link, 'x_', 280);
+	}
+
+	private static function build_facebook_text(int $post_id, array $opt, string $link): string {
+		return self::build_network_text($post_id, $opt, $link, 'fb_', 5000);
+	}
+
+	private static function build_instagram_caption(int $post_id, array $opt, string $link): string {
+		return self::mb_truncate(self::build_linkedin_text($post_id, $opt, $link), 2200);
+	}
+
+	private static function build_network_text(int $post_id, array $opt, string $link, string $prefix_key, int $limit): string {
 		$title = wp_strip_all_tags(get_the_title($post_id));
 		$excerpt = self::safe_excerpt($post_id, 260);
-		$template = (string)($opt['text_template'] ?? '');
+		$template = self::network_opt_string($opt, $prefix_key . 'text_template', 'text_template');
 
 		if (trim($template) !== '') {
 			$normalized_template = str_replace(["\r\n", "\r"], "\n", $template);
 			$normalized_template = str_replace(['/n/n', '/n'], ["\n\n", "\n"], $normalized_template);
 			$normalized_template = str_replace(['{br2}', '{br}'], ["\n\n", "\n"], $normalized_template);
 			$tokens = [
-				'{prefix}' => (string)$opt['prefix'],
-				'{title}' => !empty($opt['include_title']) ? $title : '',
-				'{excerpt}' => !empty($opt['include_excerpt']) ? $excerpt : '',
-				'{url}' => !empty($opt['include_url']) ? $link : '',
-				'{suffix}' => (string)$opt['suffix'],
+				'{prefix}' => self::network_opt_string($opt, $prefix_key . 'prefix', 'prefix'),
+				'{title}' => self::network_opt_bool($opt, $prefix_key . 'include_title', 'include_title') ? $title : '',
+				'{excerpt}' => self::network_opt_bool($opt, $prefix_key . 'include_excerpt', 'include_excerpt') ? $excerpt : '',
+				'{url}' => self::network_opt_bool($opt, $prefix_key . 'include_url', 'include_url') ? $link : '',
+				'{suffix}' => self::network_opt_string($opt, $prefix_key . 'suffix', 'suffix'),
 			];
 			$text = strtr($normalized_template, $tokens);
 			$text = preg_replace("/[ \t]+\n/", "\n", $text) ?? $text;
-			return self::mb_truncate(trim($text), 2800);
+			return self::mb_truncate(trim($text), $limit);
 		}
 
 		$parts = [];
-		if ($opt['prefix']) {
-			$parts[] = $opt['prefix'];
+		$effective_prefix = self::network_opt_string($opt, $prefix_key . 'prefix', 'prefix');
+		if ($effective_prefix !== '') {
+			$parts[] = $effective_prefix;
 		}
 
-		$ordered = self::normalize_content_order((string)($opt['content_order'] ?? 'title,excerpt,url'));
+		$ordered = self::network_opt_order($opt, $prefix_key . 'content_order', 'content_order');
 		$order = array_filter(array_map('trim', explode(',', $ordered)), static fn($v) => $v !== '');
 		foreach ($order as $token) {
-			if ($token === 'title' && !empty($opt['include_title']) && $title !== '') {
+			if ($token === 'title' && self::network_opt_bool($opt, $prefix_key . 'include_title', 'include_title') && $title !== '') {
 				$parts[] = $title;
 			}
-			if ($token === 'excerpt' && !empty($opt['include_excerpt']) && $excerpt !== '') {
+			if ($token === 'excerpt' && self::network_opt_bool($opt, $prefix_key . 'include_excerpt', 'include_excerpt') && $excerpt !== '') {
 				$parts[] = $excerpt;
 			}
-			if ($token === 'url' && !empty($opt['include_url']) && $link !== '') {
+			if ($token === 'url' && self::network_opt_bool($opt, $prefix_key . 'include_url', 'include_url') && $link !== '') {
 				$parts[] = $link;
 			}
 		}
 
-		if ($opt['suffix']) {
-			$parts[] = $opt['suffix'];
+		$effective_suffix = self::network_opt_string($opt, $prefix_key . 'suffix', 'suffix');
+		if ($effective_suffix !== '') {
+			$parts[] = $effective_suffix;
 		}
 
 		$text = trim(implode("\n\n", array_filter($parts, static fn($p) => (string)$p !== '')));
-		return self::mb_truncate($text, 2800);
+		return self::mb_truncate($text, $limit);
 	}
 
-	private static function build_x_text(int $post_id, array $opt, string $link): string {
-		return self::mb_truncate(self::build_linkedin_text($post_id, $opt, $link), 280);
+	private static function network_opt_string(array $opt, string $network_key, string $fallback_key): string {
+		$network_value = trim((string)($opt[$network_key] ?? ''));
+		if ($network_value !== '') {
+			return $network_value;
+		}
+		return trim((string)($opt[$fallback_key] ?? ''));
 	}
 
-	private static function build_facebook_text(int $post_id, array $opt, string $link): string {
-		return self::mb_truncate(self::build_linkedin_text($post_id, $opt, $link), 5000);
+	private static function network_opt_bool(array $opt, string $network_key, string $fallback_key): bool {
+		if (array_key_exists($network_key, $opt)) {
+			return !empty($opt[$network_key]);
+		}
+		return !empty($opt[$fallback_key]);
 	}
 
-	private static function build_instagram_caption(int $post_id, array $opt, string $link): string {
-		return self::mb_truncate(self::build_linkedin_text($post_id, $opt, $link), 2200);
+	private static function network_opt_order(array $opt, string $network_key, string $fallback_key): string {
+		$network_value = trim((string)($opt[$network_key] ?? ''));
+		if ($network_value !== '') {
+			return self::normalize_content_order($network_value);
+		}
+		return self::normalize_content_order((string)($opt[$fallback_key] ?? 'title,excerpt,url'));
 	}
 
 	private static function normalize_content_order(string $raw): string {
