@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.51
+ * Version: 0.64
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * Requires at least: 6.0
@@ -34,6 +34,8 @@ final class PKLIAP_Plugin {
 	public static function init(): void {
 		add_action('admin_menu', [__CLASS__, 'admin_menu']);
 		add_action('admin_init', [__CLASS__, 'register_settings']);
+		add_action('admin_notices', [__CLASS__, 'admin_notices']);
+		add_action('admin_bar_menu', [__CLASS__, 'admin_bar_menu'], 100);
 		add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_plugins_icon']);
 		add_action('rest_api_init', [__CLASS__, 'register_rest_routes']);
 
@@ -41,10 +43,15 @@ final class PKLIAP_Plugin {
 		add_action('admin_post_pkliap_oauth_callback', [__CLASS__, 'handle_oauth_callback']);
 		add_action('admin_post_pkliap_disconnect', [__CLASS__, 'handle_disconnect']);
 		add_action('admin_post_pkliap_test_post', [__CLASS__, 'handle_test_post']);
+		add_action('admin_post_pkliap_linkedin_step1', [__CLASS__, 'handle_linkedin_step1']);
+		add_action('admin_post_pkliap_linkedin_step3', [__CLASS__, 'handle_linkedin_step3']);
 		add_action('admin_post_pkliap_detect_author', [__CLASS__, 'handle_detect_author']);
+		add_action('admin_post_pkliap_recheck_connections', [__CLASS__, 'handle_recheck_connections']);
+		add_action('admin_post_pkliap_dry_run_connections', [__CLASS__, 'handle_dry_run_connections']);
 		add_action('admin_post_pkliap_x_connect', [__CLASS__, 'handle_x_connect']);
 		add_action('admin_post_pkliap_x_oauth_callback', [__CLASS__, 'handle_x_oauth_callback']);
 		add_action('admin_post_pkliap_x_disconnect', [__CLASS__, 'handle_x_disconnect']);
+		add_action('admin_post_pkliap_x_check', [__CLASS__, 'handle_x_check']);
 
 		add_action('transition_post_status', [__CLASS__, 'on_transition_post_status'], 10, 3);
 		add_action('pkliap_async_share_task', [__CLASS__, 'do_async_share'], 10, 1);
@@ -279,6 +286,11 @@ final class PKLIAP_Plugin {
 			'last_oauth_at' => 0,
 			'last_oauth_token_len' => 0,
 			'last_oauth_error' => '',
+			'last_linkedin_dry_run_ok' => 0,
+			'last_linkedin_dry_run_at' => 0,
+			'last_linkedin_dry_run_message' => '',
+			'last_admin_alert_at' => 0,
+			'last_admin_alert_hash' => '',
 			'x_enabled' => 0,
 			'x_api_key' => '',
 			'x_api_secret' => '',
@@ -295,6 +307,8 @@ final class PKLIAP_Plugin {
 			'x_text_template' => '',
 			'last_x_error' => '',
 			'last_x_error_at' => 0,
+			'last_x_check_message' => '',
+			'last_x_check_at' => 0,
 			'fb_enabled' => 0,
 			'fb_page_id' => '',
 			'fb_access_token' => '',
@@ -488,8 +502,15 @@ final class PKLIAP_Plugin {
 			'last_oauth_at',
 			'last_oauth_token_len',
 			'last_oauth_error',
+			'last_linkedin_dry_run_ok',
+			'last_linkedin_dry_run_at',
+			'last_linkedin_dry_run_message',
+			'last_admin_alert_at',
+			'last_admin_alert_hash',
 			'last_x_error',
 			'last_x_error_at',
+			'last_x_check_message',
+			'last_x_check_at',
 			'last_fb_error',
 			'last_fb_error_at',
 			'last_ig_error',
@@ -515,6 +536,7 @@ final class PKLIAP_Plugin {
 		$expires_at = (int)($opt['access_token_expires_at'] ?? 0);
 		$token_not_expired = ($expires_at <= 0) ? true : (time() < $expires_at);
 		$has_token = $access_token_present && $token_not_expired;
+		$pending_alerts = self::collect_pending_alerts($opt);
 
 		$post_types = get_post_types(['public' => true], 'objects');
 
@@ -554,6 +576,7 @@ final class PKLIAP_Plugin {
 		$linkedin_connected = ($has_token && $has_author_urn);
 		$fb_connected = (!empty($opt['fb_page_id']) && !empty($opt['fb_access_token']));
 		$ig_connected = (!empty($opt['ig_user_id']) && !empty($opt['ig_access_token']));
+		$health = self::build_connection_health($opt, $has_token, $token_not_expired, $has_author_urn, $x_connected, $fb_connected, $ig_connected);
 
 		$tz = function_exists('wp_timezone') ? wp_timezone() : new DateTimeZone('UTC');
 		$today_start = (new DateTimeImmutable('today', $tz))->getTimestamp();
@@ -725,6 +748,9 @@ final class PKLIAP_Plugin {
 			if (!empty($flash['error'])) {
 				echo '<div class="notice notice-error"><p>' . esc_html((string)$flash['error']) . '</p></div>';
 			}
+			if (!empty($pending_alerts)) {
+				echo '<div class="notice notice-warning is-dismissible"><p><strong>Attention :</strong> ' . esc_html(implode(' ', $pending_alerts)) . '</p></div>';
+			}
 			?>
 
 			<div class="pks-modern">
@@ -796,31 +822,31 @@ final class PKLIAP_Plugin {
 							<div class="pks-card-title">Statut des connexions</div>
 							<div class="pks-checklist">
 								<div class="pks-checkrow">
-									<span class="pks-pill <?php echo $linkedin_connected ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $linkedin_connected ? 'OK' : 'KO'; ?></span>
+									<span class="pks-pill <?php echo $health['linkedin']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['linkedin']['ok'] ? 'OK' : 'KO'; ?></span>
 									<div>
 										<strong>LinkedIn</strong>
-										<p><?php echo $linkedin_connected ? 'Token valide + Author URN renseigné.' : 'Token manquant/expiré ou Author URN manquant.'; ?></p>
+										<p><?php echo esc_html($health['linkedin']['message']); ?></p>
 									</div>
 								</div>
 								<div class="pks-checkrow">
-									<span class="pks-pill <?php echo $x_connected ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $x_connected ? 'OK' : 'KO'; ?></span>
+									<span class="pks-pill <?php echo $health['x']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['x']['ok'] ? 'OK' : 'KO'; ?></span>
 									<div>
 										<strong>X</strong>
-										<p><?php echo $x_connected ? 'Token utilisateur OAuth 1.0a présent.' : 'Compte non connecté (token manquant).'; ?></p>
+										<p><?php echo esc_html($health['x']['message']); ?></p>
 									</div>
 								</div>
 								<div class="pks-checkrow">
-									<span class="pks-pill <?php echo $fb_connected ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $fb_connected ? 'OK' : 'KO'; ?></span>
+									<span class="pks-pill <?php echo $health['facebook']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['facebook']['ok'] ? 'OK' : 'KO'; ?></span>
 									<div>
 										<strong>Facebook</strong>
-										<p><?php echo $fb_connected ? 'Page ID + Access Token renseignés.' : 'Page ID ou Access Token manquant.'; ?></p>
+										<p><?php echo esc_html($health['facebook']['message']); ?></p>
 									</div>
 								</div>
 								<div class="pks-checkrow">
-									<span class="pks-pill <?php echo $ig_connected ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $ig_connected ? 'OK' : 'KO'; ?></span>
+									<span class="pks-pill <?php echo $health['instagram']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['instagram']['ok'] ? 'OK' : 'KO'; ?></span>
 									<div>
 										<strong>Instagram</strong>
-										<p><?php echo $ig_connected ? 'User ID + Access Token renseignés.' : 'User ID ou Access Token manquant.'; ?></p>
+										<p><?php echo esc_html($health['instagram']['message']); ?></p>
 									</div>
 								</div>
 							</div>
@@ -922,8 +948,17 @@ final class PKLIAP_Plugin {
 							</div>
 							<div class="pks-actions-row" style="margin:0 0 12px;">
 								<a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_x_connect'), 'pkliap_x_connect')); ?>">Connecter / Reconnecter</a>
+								<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_x_check'), 'pkliap_x_check')); ?>">Tester X maintenant</a>
 								<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_x_disconnect'), 'pkliap_x_disconnect')); ?>">Déconnecter</a>
 							</div>
+							<?php if (!empty($opt['last_x_check_message'])): ?>
+								<p class="description" style="color:#2271b1;">
+									Dernier test X: <?php echo esc_html((string)$opt['last_x_check_message']); ?>
+									<?php if (!empty($opt['last_x_check_at'])): ?>
+										<br/>Le <?php echo esc_html(wp_date('Y-m-d H:i', (int)$opt['last_x_check_at'])); ?>
+									<?php endif; ?>
+								</p>
+							<?php endif; ?>
 							<?php if (!empty($opt['last_x_error'])): ?>
 								<p class="description" style="color:#b32d2e;">
 									Dernière erreur X: <?php echo esc_html((string)$opt['last_x_error']); ?>
@@ -931,6 +966,11 @@ final class PKLIAP_Plugin {
 										<br/>Le <?php echo esc_html(wp_date('Y-m-d H:i', (int)$opt['last_x_error_at'])); ?>
 									<?php endif; ?>
 								</p>
+								<?php if (self::is_x_credits_error((string)$opt['last_x_error'])): ?>
+									<div class="notice notice-error inline" style="margin:10px 0 0;">
+										<p><strong>X bloque la publication côté facturation.</strong> Le compte développeur n'a pas assez de crédits pour créer un post via l'API. Solution officielle: va dans <a href="<?php echo esc_url($link_x_developer); ?>" target="_blank" rel="noopener">X Developer Portal</a> → Billing / Credits, ajoute des crédits, puis reviens ici et clique sur <strong>Publier maintenant</strong>. Solution immédiate sans API: utilise <strong>Publier via navigateur</strong> dans le bloc Test X.</p>
+									</div>
+								<?php endif; ?>
 							<?php endif; ?>
 							<table class="form-table" role="presentation">
 								<tr>
@@ -994,7 +1034,7 @@ final class PKLIAP_Plugin {
 
 						<div class="pks-card pks-card--wide">
 							<div class="pks-card-title">Test X</div>
-							<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié pour tenter un partage X.</p>
+							<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié. <strong>Publier maintenant</strong> utilise l’API X et nécessite des crédits. <strong>Publier via navigateur</strong> ouvre X avec le texte prérempli et ne consomme pas de crédits API.</p>
 							<?php
 							$posts = get_posts([
 								'post_type' => $opt['post_type_whitelist'],
@@ -1025,6 +1065,7 @@ final class PKLIAP_Plugin {
 										$x_post_url = $x_post_id ? ('https://x.com/i/web/status/' . rawurlencode($x_post_id)) : '';
 										$x_status = $x_shared_at ? ('Partagé le ' . esc_html(wp_date('Y-m-d H:i', $x_shared_at)) . ($x_post_id ? '<br/><code style="font-size:11px;">' . esc_html($x_post_id) . '</code>' : '') . ($x_post_url ? '<br/><a href="' . esc_url($x_post_url) . '" target="_blank" rel="noopener">Voir sur X</a>' : '')) : 'Jamais partagé';
 										$x_action_url = wp_nonce_url(self::admin_url_action('pkliap_test_post') . '&post_id=' . (int)$p->ID . '&network=x', 'pkliap_test_post_' . (int)$p->ID);
+										$x_intent_url = self::build_x_intent_url((int)$p->ID, $opt);
 										$edit_url = get_edit_post_link($p->ID, '');
 										$thumb_html = get_the_post_thumbnail($p->ID, [48, 48], ['style' => 'width:48px;height:48px;object-fit:cover;border-radius:4px;']);
 										?>
@@ -1039,7 +1080,10 @@ final class PKLIAP_Plugin {
 												</div>
 											</td>
 											<td><?php echo $x_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
-											<td><a class="button button-secondary" href="<?php echo esc_url($x_action_url); ?>">Publier maintenant</a></td>
+											<td>
+												<a class="button button-secondary" href="<?php echo esc_url($x_action_url); ?>">Publier maintenant</a>
+												<a class="button" style="margin-top:6px;" href="<?php echo esc_url($x_intent_url); ?>" target="_blank" rel="noopener">Publier via navigateur</a>
+											</td>
 										</tr>
 									<?php endforeach; ?>
 								<?php endif; ?>
@@ -1394,20 +1438,37 @@ final class PKLIAP_Plugin {
 					</form>
 
 					<div class="pks-card pks-card--accent-purple">
-						<div class="pks-card-title">Compte LinkedIn (qui poste)</div>
-						<div class="pks-actions-row" style="margin:-6px 0 12px;">
-							<?php echo $has_token ? '<span class="pks-pill pks-pill--ok">Connecté</span>' : '<span class="pks-pill pks-pill--bad">Non connecté</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-							<?php echo $access_token_present ? '<span class="pks-pill pks-pill--ok">Token présent</span>' : '<span class="pks-pill pks-pill--bad">Token absent</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-							<?php if ($access_token_present): ?>
-								<?php echo $token_not_expired ? '<span class="pks-pill pks-pill--ok">Token OK</span>' : '<span class="pks-pill pks-pill--bad">Token expiré</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-							<?php endif; ?>
-						</div>
-						<div class="pks-actions-row" style="margin:0 0 12px;">
-							<a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_connect'), 'pkliap_connect')); ?>">Connecter / Reconnecter</a>
-							<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_disconnect'), 'pkliap_disconnect')); ?>">Déconnecter</a>
-							<?php if ($has_token && empty($opt['author_urn'])): ?>
-								<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_detect_author'), 'pkliap_detect_author')); ?>">Détecter mon profil</a>
-							<?php endif; ?>
+						<div class="pks-card-title">LinkedIn: connexion en 3 étapes</div>
+						<?php
+						$linkedin_step2_ok = $has_token;
+						$linkedin_step3_ok = self::linkedin_account_looks_ready($opt);
+						$linkedin_test_msg = trim((string)($opt['last_linkedin_dry_run_message'] ?? ''));
+						?>
+						<div class="pks-checklist" style="margin:0 0 12px;">
+							<div class="pks-checkrow">
+								<span class="pks-pill pks-pill--warn">1</span>
+								<div>
+									<strong>Réinitialiser l’ancienne connexion</strong>
+									<p>Efface l’ancien token, l’Author URN et les erreurs LinkedIn stockées.</p>
+									<p style="margin:8px 0 0;"><a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_linkedin_step1'), 'pkliap_linkedin_step1')); ?>">1. Réinitialiser</a></p>
+								</div>
+							</div>
+							<div class="pks-checkrow">
+								<span class="pks-pill <?php echo $linkedin_step2_ok ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $linkedin_step2_ok ? 'OK' : 'KO'; ?></span>
+								<div>
+									<strong>Reconnecter LinkedIn</strong>
+									<p><?php echo $linkedin_step2_ok ? 'Token LinkedIn valide.' : 'Ouvre LinkedIn, autorise l’application, puis revient ici automatiquement.'; ?></p>
+									<p style="margin:8px 0 0;"><a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_connect'), 'pkliap_connect')); ?>">2. Reconnecter</a></p>
+								</div>
+							</div>
+							<div class="pks-checkrow">
+								<span class="pks-pill <?php echo $linkedin_step3_ok ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $linkedin_step3_ok ? 'OK' : 'KO'; ?></span>
+								<div>
+									<strong>Finaliser + tester sans publier</strong>
+									<p><?php echo $linkedin_step3_ok ? esc_html($linkedin_test_msg ?: 'Compte LinkedIn finalisé: token valide + Author URN détecté.') : 'Détecte l’Author URN puis vérifie le compte LinkedIn sans créer de post.'; ?></p>
+									<p style="margin:8px 0 0;"><a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_linkedin_step3'), 'pkliap_linkedin_step3')); ?>">3. Finaliser + tester</a></p>
+								</div>
+							</div>
 						</div>
 						<?php if ($access_token_present && $expires_at > 0): ?>
 							<p class="pks-info" style="margin:-4px 0 12px;">Expiration token : <?php echo esc_html(wp_date('Y-m-d H:i', $expires_at)); ?></p>
@@ -1616,6 +1677,9 @@ final class PKLIAP_Plugin {
 
 					<div class="pks-card pks-card--accent-warn pks-card--wide">
 						<div class="pks-card-title">Debug / Logs</div>
+						<?php if (!empty($pending_alerts)): ?>
+							<p class="pks-info" style="margin:-4px 0 12px;color:#b45309;">Des alertes actives sont détectées. Corrige la cause puis recharge la page pour les faire disparaître.</p>
+						<?php endif; ?>
 						<form method="post" action="options.php">
 							<?php settings_fields('pkliap'); ?>
 							<table class="form-table" role="presentation">
@@ -1685,7 +1749,7 @@ final class PKLIAP_Plugin {
 		$opt = self::get_options();
 		if (empty($opt['client_id']) || empty($opt['client_secret'])) {
 			self::set_flash('error', 'Renseignez Client ID / Client Secret avant de connecter.');
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
 			exit;
 		}
 
@@ -1730,14 +1794,14 @@ final class PKLIAP_Plugin {
 
 		if (!$state || !$expected_state || !hash_equals($expected_state, $state)) {
 			self::set_flash('error', 'State OAuth invalide.');
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
 			exit;
 		}
 
 		$code = isset($_GET['code']) ? sanitize_text_field((string)wp_unslash($_GET['code'])) : '';
 		if (!$code) {
 			self::set_flash('error', 'Code OAuth manquant.');
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
 			exit;
 		}
 
@@ -1750,7 +1814,7 @@ final class PKLIAP_Plugin {
 				'last_oauth_error' => $token->get_error_message(),
 			]);
 			self::set_flash('error', $token->get_error_message());
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
 			exit;
 		}
 
@@ -1764,7 +1828,7 @@ final class PKLIAP_Plugin {
 				'last_oauth_error' => 'Réponse token invalide (access_token manquant).',
 			]);
 			self::set_flash('error', 'Réponse token invalide (access_token manquant).');
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
 			exit;
 		}
 
@@ -1782,9 +1846,11 @@ final class PKLIAP_Plugin {
 			'last_oauth_at' => time(),
 			'last_oauth_token_len' => strlen($access_token),
 			'last_oauth_error' => '',
+			'last_share_error' => '',
+			'last_share_error_at' => 0,
 		]);
 
-		$notice = 'Connecté à LinkedIn.';
+		$notice = 'Étape 2 terminée: LinkedIn est reconnecté. Lance maintenant l’étape 3 pour vérifier l’Author URN.';
 		$error = '';
 
 		// Auto-détection de l'URN profil (urn:li:person:...) pour éviter une config manuelle.
@@ -1795,7 +1861,7 @@ final class PKLIAP_Plugin {
 				'last_oauth_error' => 'Token non persisté après OAuth. Suspect: plugin de sécurité/cache, object-cache, ou restriction base de données.',
 			]);
 			self::set_flash('error', 'Connecté, mais le token n’a pas été persisté. Désactive temporairement Wordfence/cache, puis reconnecte.');
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
 			exit;
 		}
 		if (empty($opt_after['author_urn'])) {
@@ -1810,8 +1876,10 @@ final class PKLIAP_Plugin {
 				self::update_options([
 					'author_urn' => 'urn:li:person:' . $me_id,
 					'last_author_detect_error' => '',
+					'last_share_error' => '',
+					'last_share_error_at' => 0,
 				]);
-				$notice = 'Connecté à LinkedIn. Author URN détecté automatiquement (profil).';
+				$notice = 'Étape 2 terminée: LinkedIn est reconnecté. Author URN détecté automatiquement.';
 			}
 		}
 
@@ -1820,8 +1888,43 @@ final class PKLIAP_Plugin {
 		} else {
 			self::set_flash('notice', $notice);
 		}
-		wp_safe_redirect(self::settings_url());
+		wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
 		exit;
+	}
+
+	public static function handle_linkedin_step1(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_linkedin_step1');
+
+		self::set_tokens([
+			'access_token' => '',
+			'access_token_expires_at' => 0,
+			'refresh_token' => '',
+			'refresh_token_expires_at' => 0,
+		]);
+		self::update_options([
+			'last_linkedin_dry_run_ok' => 0,
+			'last_linkedin_dry_run_at' => 0,
+			'last_linkedin_dry_run_message' => '',
+			'author_urn' => '',
+			'last_share_error' => '',
+			'last_share_error_at' => 0,
+			'last_oauth_error' => '',
+			'last_author_detect_error' => '',
+		]);
+		self::set_flash('notice', 'Étape 1 terminée: ancienne connexion LinkedIn effacée. Clique maintenant sur 2. Reconnecter.');
+		wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
+		exit;
+	}
+
+	public static function handle_linkedin_step3(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_linkedin_step3');
+		self::detect_author_and_redirect();
 	}
 
 	public static function handle_disconnect(): void {
@@ -1845,7 +1948,7 @@ final class PKLIAP_Plugin {
 		]);
 
 		self::set_flash('notice', 'Déconnecté.');
-		wp_safe_redirect(self::settings_url());
+		wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
 		exit;
 	}
 
@@ -1854,11 +1957,14 @@ final class PKLIAP_Plugin {
 			wp_die('Forbidden');
 		}
 		check_admin_referer('pkliap_detect_author');
+		self::detect_author_and_redirect();
+	}
 
+	private static function detect_author_and_redirect(): void {
 		$opt = self::get_options();
 		if (empty($opt['access_token'])) {
 			self::set_flash('error', 'Non connecté à LinkedIn (token manquant).');
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
 			exit;
 		}
 
@@ -1866,18 +1972,192 @@ final class PKLIAP_Plugin {
 		if (is_wp_error($me_id)) {
 			self::update_options([
 				'last_author_detect_error' => $me_id->get_error_message(),
+				'last_linkedin_dry_run_ok' => 0,
+				'last_linkedin_dry_run_at' => time(),
+				'last_linkedin_dry_run_message' => $me_id->get_error_message(),
 			]);
 			self::set_flash('error', 'Impossible de détecter automatiquement le profil LinkedIn. ' . $me_id->get_error_message());
-			wp_safe_redirect(self::settings_url());
+			wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
 			exit;
 		}
 
 		self::update_options([
 			'author_urn' => 'urn:li:person:' . $me_id,
 			'last_author_detect_error' => '',
+			'last_share_error' => '',
+			'last_share_error_at' => 0,
+			'last_linkedin_dry_run_ok' => 1,
+			'last_linkedin_dry_run_at' => time(),
+			'last_linkedin_dry_run_message' => 'Author URN détecté et test dry-run LinkedIn OK.',
 		]);
 
-		self::set_flash('notice', 'Author URN détecté automatiquement (profil).');
+		self::set_flash('notice', 'Étape 3 terminée: Author URN détecté et test dry-run LinkedIn OK.');
+		wp_safe_redirect(self::settings_url(['network' => 'linkedin']));
+		exit;
+	}
+
+	public static function handle_recheck_connections(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_recheck_connections');
+
+		$opt = self::get_options();
+		$messages = [];
+
+		if (!empty($opt['access_token'])) {
+			$refresh = self::maybe_refresh_linkedin_token($opt);
+			if (is_wp_error($refresh)) {
+				self::update_options([
+					'last_share_error' => $refresh->get_error_message(),
+					'last_share_error_at' => time(),
+				]);
+				$messages[] = 'LinkedIn: ' . $refresh->get_error_message();
+			} else {
+				$me_id = self::linkedin_get_member_id(self::get_options()['access_token']);
+				if (is_wp_error($me_id)) {
+					self::update_options([
+						'last_share_error' => $me_id->get_error_message(),
+						'last_share_error_at' => time(),
+					]);
+					$messages[] = 'LinkedIn: ' . $me_id->get_error_message();
+				} else {
+					self::update_options([
+						'last_share_error' => '',
+						'last_share_error_at' => 0,
+					]);
+					$messages[] = 'LinkedIn: OK';
+				}
+			}
+		}
+
+		if (!empty($opt['x_api_key']) && !empty($opt['x_api_secret']) && !empty($opt['x_access_token']) && !empty($opt['x_access_token_secret'])) {
+			$x_check = self::x_get_me($opt);
+			if (is_wp_error($x_check)) {
+				self::update_options([
+					'last_x_error' => $x_check->get_error_message(),
+					'last_x_error_at' => time(),
+				]);
+				$messages[] = 'X: ' . $x_check->get_error_message();
+			} else {
+				self::update_options([
+					'last_x_error' => '',
+					'last_x_error_at' => 0,
+				]);
+				$messages[] = 'X: OK';
+			}
+		}
+
+		$meta_ok = true;
+		if (!empty($opt['fb_page_id']) && !empty($opt['fb_access_token'])) {
+			$fb_check = self::meta_graph_get('/me', ['fields' => 'id'], (string)$opt['fb_access_token']);
+			if (is_wp_error($fb_check)) {
+				self::update_options([
+					'last_fb_error' => $fb_check->get_error_message(),
+					'last_fb_error_at' => time(),
+				]);
+				$messages[] = 'Facebook: ' . $fb_check->get_error_message();
+				$meta_ok = false;
+			} else {
+				self::update_options([
+					'last_fb_error' => '',
+					'last_fb_error_at' => 0,
+				]);
+				$messages[] = 'Facebook: OK';
+			}
+		}
+		if (!empty($opt['ig_user_id']) && !empty($opt['ig_access_token'])) {
+			$ig_check = self::meta_graph_get('/' . rawurlencode((string)$opt['ig_user_id']), ['fields' => 'id'], (string)$opt['ig_access_token']);
+			if (is_wp_error($ig_check)) {
+				self::update_options([
+					'last_ig_error' => $ig_check->get_error_message(),
+					'last_ig_error_at' => time(),
+				]);
+				$messages[] = 'Instagram: ' . $ig_check->get_error_message();
+				$meta_ok = false;
+			} else {
+				self::update_options([
+					'last_ig_error' => '',
+					'last_ig_error_at' => 0,
+				]);
+				$messages[] = 'Instagram: OK';
+			}
+		}
+
+		if (!$messages) {
+			$messages[] = 'Aucune connexion active à vérifier.';
+		}
+
+		self::set_flash($meta_ok ? 'notice' : 'error', implode(' | ', $messages));
+		wp_safe_redirect(self::settings_url());
+		exit;
+	}
+
+	public static function handle_dry_run_connections(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_dry_run_connections');
+
+		$opt = self::get_options();
+		$messages = [];
+
+		if (!empty($opt['access_token']) && !empty($opt['client_id']) && !empty($opt['client_secret'])) {
+			$refresh = self::maybe_refresh_linkedin_token($opt);
+			if (is_wp_error($refresh)) {
+				self::update_options([
+					'last_share_error' => $refresh->get_error_message(),
+					'last_share_error_at' => time(),
+				]);
+				$messages[] = 'LinkedIn: ' . $refresh->get_error_message();
+			} else {
+				$me = self::linkedin_get_member_id(self::get_options()['access_token']);
+				if (is_wp_error($me)) {
+					self::update_options([
+						'last_share_error' => $me->get_error_message(),
+						'last_share_error_at' => time(),
+						'last_linkedin_dry_run_ok' => 0,
+						'last_linkedin_dry_run_at' => time(),
+						'last_linkedin_dry_run_message' => $me->get_error_message(),
+					]);
+					$messages[] = 'LinkedIn: ' . $me->get_error_message();
+				} else {
+					self::update_options([
+						'last_share_error' => '',
+						'last_share_error_at' => 0,
+						'last_linkedin_dry_run_ok' => 1,
+						'last_linkedin_dry_run_at' => time(),
+						'last_linkedin_dry_run_message' => 'Author URN détecté et test dry-run LinkedIn OK.',
+					]);
+					$messages[] = 'LinkedIn: auth OK, author OK, dry run OK';
+				}
+			}
+		} else {
+			$messages[] = 'LinkedIn: configuration incomplète';
+		}
+
+		if (!empty($opt['x_api_key']) && !empty($opt['x_api_secret']) && !empty($opt['x_access_token']) && !empty($opt['x_access_token_secret'])) {
+			$x_me = self::x_get_me($opt);
+			$messages[] = is_wp_error($x_me) ? ('X: ' . $x_me->get_error_message()) : 'X: auth OK, dry run OK';
+		} else {
+			$messages[] = 'X: configuration incomplète';
+		}
+
+		if (!empty($opt['fb_access_token'])) {
+			$fb_me = self::meta_graph_get('/me', ['fields' => 'id'], (string)$opt['fb_access_token']);
+			$messages[] = is_wp_error($fb_me) ? ('Facebook: ' . $fb_me->get_error_message()) : 'Facebook: auth OK, dry run OK';
+		} else {
+			$messages[] = 'Facebook: configuration incomplète';
+		}
+
+		if (!empty($opt['ig_access_token'])) {
+			$ig_me = self::meta_graph_get('/me', ['fields' => 'id'], (string)$opt['ig_access_token']);
+			$messages[] = is_wp_error($ig_me) ? ('Instagram: ' . $ig_me->get_error_message()) : 'Instagram: auth OK, dry run OK';
+		} else {
+			$messages[] = 'Instagram: configuration incomplète';
+		}
+
+		self::set_flash('notice', implode(' | ', $messages));
 		wp_safe_redirect(self::settings_url());
 		exit;
 	}
@@ -1992,6 +2272,60 @@ final class PKLIAP_Plugin {
 		exit;
 	}
 
+	public static function handle_x_check(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_x_check');
+
+		$opt = self::get_options();
+		if (empty($opt['x_api_key']) || empty($opt['x_api_secret'])) {
+			self::update_options([
+				'last_x_check_message' => 'Configuration incomplète: API Key / API Key Secret manquants.',
+				'last_x_check_at' => time(),
+			]);
+			self::set_flash('error', 'X: API Key / API Key Secret manquants.');
+			wp_safe_redirect(self::settings_url(['network' => 'x']));
+			exit;
+		}
+		if (empty($opt['x_access_token']) || empty($opt['x_access_token_secret'])) {
+			self::update_options([
+				'last_x_check_message' => 'Compte non connecté: token utilisateur OAuth 1.0a manquant.',
+				'last_x_check_at' => time(),
+			]);
+			self::set_flash('error', 'X: compte non connecté.');
+			wp_safe_redirect(self::settings_url(['network' => 'x']));
+			exit;
+		}
+
+		$me = self::x_get_me($opt);
+		if (is_wp_error($me)) {
+			$msg = $me->get_error_message();
+			self::update_options([
+				'last_x_error' => $msg,
+				'last_x_error_at' => time(),
+				'last_x_check_message' => self::humanize_share_error('x', $msg),
+				'last_x_check_at' => time(),
+			]);
+			self::set_flash('error', 'X: ' . self::humanize_share_error('x', $msg));
+			wp_safe_redirect(self::settings_url(['network' => 'x']));
+			exit;
+		}
+
+		$screen_name = (string)($opt['x_screen_name'] ?? '');
+		if (isset($me['data']['username']) && is_string($me['data']['username']) && $me['data']['username'] !== '') {
+			$screen_name = $me['data']['username'];
+		}
+		$message = 'Authentification OK' . ($screen_name !== '' ? ' pour @' . $screen_name : '') . '. Pour valider la publication réelle, utilise “Publier maintenant” sur un article.';
+		self::update_options([
+			'last_x_check_message' => $message,
+			'last_x_check_at' => time(),
+		]);
+		self::set_flash('notice', 'X: ' . $message);
+		wp_safe_redirect(self::settings_url(['network' => 'x']));
+		exit;
+	}
+
 	public static function handle_test_post(): void {
 		if (!current_user_can('manage_options')) {
 			wp_die('Forbidden');
@@ -2038,12 +2372,16 @@ final class PKLIAP_Plugin {
 		if (is_wp_error($res)) {
 			if ($network === 'x') {
 				self::update_options(['last_x_error' => $res->get_error_message(), 'last_x_error_at' => time()]);
+				self::maybe_notify_admin_failure($network, $post_id, $res->get_error_message());
 			} elseif ($network === 'facebook') {
 				self::update_options(['last_fb_error' => $res->get_error_message(), 'last_fb_error_at' => time()]);
+				self::maybe_notify_admin_failure($network, $post_id, $res->get_error_message());
 			} elseif ($network === 'instagram') {
 				self::update_options(['last_ig_error' => $res->get_error_message(), 'last_ig_error_at' => time()]);
+				self::maybe_notify_admin_failure($network, $post_id, $res->get_error_message());
 			} else {
 				self::update_options(['last_share_error' => $res->get_error_message(), 'last_share_error_at' => time()]);
+				self::maybe_notify_admin_failure($network, $post_id, $res->get_error_message());
 			}
 			self::debug_log_event('Test share ' . strtoupper($network) . ' failed for post #' . $post_id . ': ' . $res->get_error_message());
 			self::set_flash('error', $res->get_error_message());
@@ -2107,7 +2445,41 @@ final class PKLIAP_Plugin {
 			return;
 		}
 
-		// On planifie l'exécution immédiate en arrière-plan
+		// LinkedIn est traité immédiatement pour éviter qu'un WP-Cron en retard bloque l'autopublication.
+		if (!empty($opt['enabled']) && (!$linkedin_already || !empty($opt['share_on_update']))) {
+			try {
+				$linkedin_res = self::share_post_to_linkedin($post->ID, false);
+				if (is_wp_error($linkedin_res)) {
+					self::handle_share_error('linkedin', $post->ID, $linkedin_res->get_error_message(), 'last_share_error');
+					self::maybe_notify_admin_failure('linkedin', $post->ID, $linkedin_res->get_error_message());
+				} else {
+					self::update_options(['last_share_error' => '', 'last_share_error_at' => 0]);
+					self::debug_log_event("Immediate LinkedIn share success for post #{$post->ID}.");
+				}
+			} catch (Throwable $e) {
+				self::handle_share_error('linkedin', $post->ID, $e->getMessage(), 'last_share_error');
+				self::maybe_notify_admin_failure('linkedin', $post->ID, $e->getMessage());
+			}
+		}
+
+		// X est aussi tenté immédiatement: le cron WordPress peut être retardé ou désactivé sur certains hébergements.
+		if (!empty($opt['x_enabled']) && (!$x_already || !empty($opt['share_on_update']))) {
+			try {
+				$x_res = self::share_post_to_x($post->ID, false);
+				if (is_wp_error($x_res)) {
+					self::handle_share_error('x', $post->ID, $x_res->get_error_message(), 'last_x_error');
+					self::maybe_notify_admin_failure('x', $post->ID, $x_res->get_error_message());
+				} else {
+					self::update_options(['last_x_error' => '', 'last_x_error_at' => 0]);
+					self::debug_log_event("Immediate X share success for post #{$post->ID}.");
+				}
+			} catch (Throwable $e) {
+				self::handle_share_error('x', $post->ID, $e->getMessage(), 'last_x_error');
+				self::maybe_notify_admin_failure('x', $post->ID, $e->getMessage());
+			}
+		}
+
+		// On garde le cron comme secours et pour les réseaux non traités immédiatement.
 		wp_schedule_single_event(time(), 'pkliap_async_share_task', [$post->ID]);
 	}
 
@@ -2127,15 +2499,29 @@ final class PKLIAP_Plugin {
 			if (!$cfg['enabled']) continue;
 
 			try {
+				$meta_by_net = [
+					'linkedin' => self::META_SHARED_AT,
+					'x' => self::META_X_SHARED_AT,
+					'facebook' => self::META_FB_SHARED_AT,
+					'instagram' => self::META_IG_SHARED_AT,
+				];
+				if (!empty($opt['only_once']) && empty($opt['share_on_update']) && !empty($meta_by_net[$net]) && get_post_meta($post_id, $meta_by_net[$net], true)) {
+					self::debug_log_event("Auto share $net skipped for post #$post_id: already shared.");
+					continue;
+				}
+
 				$res = call_user_func([__CLASS__, $cfg['callback']], $post_id, false);
 				if (is_wp_error($res)) {
 					self::handle_share_error($net, $post_id, $res->get_error_message(), $cfg['err_key']);
+					self::maybe_notify_admin_failure($net, $post_id, $res->get_error_message());
 				} else {
 					self::update_options([$cfg['err_key'] => '', $cfg['err_key'] . '_at' => 0]);
 					self::debug_log_event("Auto share $net success for post #$post_id.");
 				}
 			} catch (Throwable $e) {
-				self::handle_share_error($net, $post_id, $e->getMessage(), $cfg['err_key']);
+				$msg = $e->getMessage();
+				self::handle_share_error($net, $post_id, $msg, $cfg['err_key']);
+				self::maybe_notify_admin_failure($net, $post_id, $msg);
 			}
 		}
 	}
@@ -2146,6 +2532,205 @@ final class PKLIAP_Plugin {
 			$err_key . '_at' => time(),
 		]);
 		self::debug_log_event("Auto share $net failed for post #$post_id: $msg");
+	}
+
+	private static function collect_pending_alerts(array $opt): array {
+		$alerts = [];
+		$map = [
+			'linkedin' => ['label' => 'LinkedIn', 'error_key' => 'last_share_error', 'time_key' => 'last_share_error_at'],
+			'x' => ['label' => 'X', 'error_key' => 'last_x_error', 'time_key' => 'last_x_error_at'],
+			'facebook' => ['label' => 'Facebook', 'error_key' => 'last_fb_error', 'time_key' => 'last_fb_error_at'],
+			'instagram' => ['label' => 'Instagram', 'error_key' => 'last_ig_error', 'time_key' => 'last_ig_error_at'],
+		];
+
+			foreach ($map as $net => $cfg) {
+				$msg = trim((string)($opt[$cfg['error_key']] ?? ''));
+				if ($msg === '') {
+					continue;
+				}
+				if ($net === 'linkedin' && self::linkedin_account_looks_ready($opt)) {
+					continue;
+				}
+				$alerts[] = $cfg['label'] . ': ' . self::humanize_share_error($net, $msg);
+			}
+
+		return $alerts;
+	}
+
+	private static function humanize_share_error(string $net, string $msg): string {
+		if ($net === 'linkedin' && stripos($msg, 'HTTP 401') !== false) {
+			return 'token LinkedIn expiré, reconnecte le compte.';
+		}
+		if ($net === 'x' && self::is_x_credits_error($msg)) {
+			return 'compte X à court de crédits; il faut ajouter des crédits ou changer de forfait.';
+		}
+		return $msg;
+	}
+
+	private static function is_x_credits_error(string $msg): bool {
+		return stripos($msg, 'HTTP 402') !== false
+			|| stripos($msg, 'CreditsDepleted') !== false
+			|| stripos($msg, 'does not have any credits') !== false
+			|| stripos($msg, 'out of PPU credits') !== false;
+	}
+
+	private static function linkedin_account_looks_ready(array $opt): bool {
+		$expires_at = (int)($opt['access_token_expires_at'] ?? 0);
+		return !empty($opt['access_token'])
+			&& !empty($opt['author_urn'])
+			&& ($expires_at <= 0 || time() < $expires_at);
+	}
+
+	private static function build_connection_health(array $opt, bool $linkedin_token_ok, bool $linkedin_token_not_expired, bool $has_author_urn, bool $x_connected, bool $fb_connected, bool $ig_connected): array {
+		$health = [];
+
+		$linkedin_error = trim((string)($opt['last_share_error'] ?? ''));
+		$linkedin_ok = $linkedin_token_ok && $linkedin_token_not_expired && $has_author_urn;
+		$health['linkedin'] = [
+			'ok' => $linkedin_ok,
+			'message' => $linkedin_ok
+				? 'Prêt côté compte LinkedIn: token valide + Author URN renseigné.'
+				: ($linkedin_error !== '' ? 'Erreur récente: ' . self::humanize_share_error('linkedin', $linkedin_error) : 'Token manquant/expiré ou Author URN manquant.'),
+		];
+
+		$x_error = trim((string)($opt['last_x_error'] ?? ''));
+		$x_ok = $x_connected && $x_error === '';
+		$x_message = 'Compte non connecté (token manquant).';
+		if ($x_ok) {
+			$x_message = 'Auth OK: token utilisateur OAuth 1.0a présent.';
+		} elseif ($x_error !== '') {
+			$x_message = self::is_x_credits_error($x_error)
+				? 'Auth probablement OK, mais publication bloquée par crédits X insuffisants.'
+				: 'Erreur récente: ' . self::humanize_share_error('x', $x_error);
+		}
+		$health['x'] = [
+			'ok' => $x_ok,
+			'message' => $x_message,
+		];
+
+		$fb_error = trim((string)($opt['last_fb_error'] ?? ''));
+		$fb_ok = $fb_connected && $fb_error === '';
+		$health['facebook'] = [
+			'ok' => $fb_ok,
+			'message' => $fb_ok
+				? 'Page ID + Access Token renseignés.'
+				: ($fb_error !== '' ? 'Erreur récente: ' . $fb_error : 'Page ID ou Access Token manquant.'),
+		];
+
+		$ig_error = trim((string)($opt['last_ig_error'] ?? ''));
+		$ig_ok = $ig_connected && $ig_error === '';
+		$health['instagram'] = [
+			'ok' => $ig_ok,
+			'message' => $ig_ok
+				? 'User ID + Access Token renseignés.'
+				: ($ig_error !== '' ? 'Erreur récente: ' . $ig_error : 'User ID ou Access Token manquant.'),
+		];
+
+		return $health;
+	}
+
+	public static function admin_notices(): void {
+		if (!current_user_can('manage_options')) {
+			return;
+		}
+		$screen = function_exists('get_current_screen') ? get_current_screen() : null;
+		if ($screen && strpos((string)$screen->id, 'pk-socialsharing') !== false) {
+			return;
+		}
+
+		$alerts = self::collect_pending_alerts(self::get_options());
+		if (!$alerts) {
+			return;
+		}
+
+		echo '<div class="notice notice-warning"><p><strong>WP PK SocialSharing :</strong> ' . esc_html(implode(' ', $alerts)) . '</p></div>';
+	}
+
+	public static function admin_bar_menu(WP_Admin_Bar $admin_bar): void {
+		if (!is_admin_bar_showing() || !current_user_can('manage_options')) {
+			return;
+		}
+
+		$alerts = self::collect_pending_alerts(self::get_options());
+		if (!$alerts) {
+			return;
+		}
+
+		$node_id = 'pkliap-alerts';
+		$count = count($alerts);
+		$label = '<span class="pkliap-adminbar-label">Social</span><span class="pkliap-badge">' . $count . '</span><span class="screen-reader-text">' . esc_html($count . ' alerte' . ($count > 1 ? 's' : '') . ' SocialSharing') . '</span>';
+		$admin_bar->add_node([
+			'id' => $node_id,
+			'title' => $label,
+			'href' => self::settings_url(),
+			'meta' => [
+				'title' => $count . ' alerte' . ($count > 1 ? 's' : '') . ' SocialSharing: ' . implode(' | ', $alerts),
+			],
+		]);
+
+		add_action('admin_head', [__CLASS__, 'admin_bar_badge_css']);
+		add_action('wp_head', [__CLASS__, 'admin_bar_badge_css']);
+	}
+
+	public static function admin_bar_badge_css(): void {
+		echo '<style>
+			#wp-admin-bar-pkliap-alerts > a.ab-item{
+				padding:0 7px !important;
+			}
+			#wp-admin-bar-pkliap-alerts > a.ab-item .pkliap-adminbar-label{
+				font-size:12px;
+			}
+			#wp-admin-bar-pkliap-alerts > a.ab-item .pkliap-badge{
+				display:inline-flex;
+				align-items:center;
+				justify-content:center;
+				min-width:15px;
+				height:15px;
+				margin-left:4px;
+				padding:0 4px;
+				border-radius:999px;
+				background:#ef4444;
+				color:#fff;
+				font-size:10px;
+				font-weight:700;
+				line-height:1;
+				vertical-align:middle;
+			}
+		</style>';
+	}
+
+	private static function maybe_notify_admin_failure(string $net, int $post_id, string $msg): void {
+		$opt = self::get_options();
+		$notify_enabled = true;
+		if (!$notify_enabled) {
+			return;
+		}
+
+		$hash = md5($net . '|' . $msg);
+		if (!empty($opt['last_admin_alert_hash']) && $opt['last_admin_alert_hash'] === $hash) {
+			return;
+		}
+
+		$to = get_option('admin_email');
+		if (!is_string($to) || $to === '') {
+			return;
+		}
+
+		$subject = sprintf('[%s] erreur %s', wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES), strtoupper($net));
+		$body = sprintf(
+			"Une erreur de partage a été détectée.\n\nRéseau : %s\nArticle ID : %d\nMessage : %s\nHeure : %s\n\nLinkedIn 401 = token expiré, reconnecte le compte.\nX 402 = crédits X insuffisants, il faut recharger le compte ou le forfait.\n",
+			strtoupper($net),
+			$post_id,
+			$msg,
+			wp_date('Y-m-d H:i:s')
+		);
+
+		if (wp_mail($to, $subject, $body)) {
+			self::update_options([
+				'last_admin_alert_at' => time(),
+				'last_admin_alert_hash' => $hash,
+			]);
+		}
 	}
 
 	/** @return array|WP_Error */
@@ -2162,6 +2747,12 @@ final class PKLIAP_Plugin {
 		if (empty($opt['author_urn'])) {
 			return new WP_Error('pkliap_no_author', 'Author URN manquant (urn:li:person:* ou urn:li:organization:*).');
 		}
+
+		$refresh_res = self::maybe_refresh_linkedin_token($opt);
+		if (is_wp_error($refresh_res)) {
+			return $refresh_res;
+		}
+		$opt = self::get_options();
 
 		if (!$force && !empty($opt['only_once'])) {
 			$already = get_post_meta($post_id, self::META_SHARED_AT, true);
@@ -2267,6 +2858,15 @@ final class PKLIAP_Plugin {
 		$res = self::linkedin_api_post('/v2/ugcPosts', $payload, $opt['access_token'], [
 			'X-Restli-Protocol-Version' => '2.0.0',
 		]);
+		if (is_wp_error($res) && strpos($res->get_error_message(), 'HTTP 401') !== false) {
+			$refresh_res = self::maybe_refresh_linkedin_token(self::get_options());
+			if (!is_wp_error($refresh_res)) {
+				$opt = self::get_options();
+				$res = self::linkedin_api_post('/v2/ugcPosts', $payload, $opt['access_token'], [
+					'X-Restli-Protocol-Version' => '2.0.0',
+				]);
+			}
+		}
 
 		if (is_wp_error($res)) {
 			return $res;
@@ -2497,6 +3097,12 @@ final class PKLIAP_Plugin {
 
 	private static function build_x_text(int $post_id, array $opt, string $link): string {
 		return self::build_network_text($post_id, $opt, $link, 'x_', 280);
+	}
+
+	private static function build_x_intent_url(int $post_id, array $opt): string {
+		$link = self::get_post_link($post_id, $opt);
+		$text = self::build_x_text($post_id, $opt, $link);
+		return 'https://x.com/intent/tweet?text=' . rawurlencode($text);
 	}
 
 	private static function build_facebook_text(int $post_id, array $opt, string $link): string {
@@ -2910,6 +3516,37 @@ final class PKLIAP_Plugin {
 		return is_array($res2['body']) ? $res2['body'] : [];
 	}
 
+	/** @return array|WP_Error */
+	private static function x_get_me(array $opt) {
+		$res = self::x_api_request(
+			'GET',
+			'https://api.x.com/2/users/me',
+			(string)$opt['x_api_key'],
+			(string)$opt['x_api_secret'],
+			(string)$opt['x_access_token'],
+			(string)$opt['x_access_token_secret'],
+			[]
+		);
+		if (!is_wp_error($res)) {
+			return is_array($res['body']) ? $res['body'] : [];
+		}
+
+		$res2 = self::x_api_request(
+			'GET',
+			'https://api.twitter.com/2/users/me',
+			(string)$opt['x_api_key'],
+			(string)$opt['x_api_secret'],
+			(string)$opt['x_access_token'],
+			(string)$opt['x_access_token_secret'],
+			[]
+		);
+		if (!is_wp_error($res2)) {
+			return is_array($res2['body']) ? $res2['body'] : [];
+		}
+
+		return $res2;
+	}
+
 	private static function x_percent_encode(string $value): string {
 		return str_replace('%7E', '~', rawurlencode($value));
 	}
@@ -3173,6 +3810,44 @@ final class PKLIAP_Plugin {
 	}
 
 	/** @return array|WP_Error */
+	private static function linkedin_refresh_access_token(string $client_id, string $client_secret, string $refresh_token) {
+		$res = wp_remote_post('https://www.linkedin.com/oauth/v2/accessToken', [
+			'timeout' => 30,
+			'headers' => [
+				'Content-Type' => 'application/x-www-form-urlencoded',
+			],
+			'body' => [
+				'grant_type' => 'refresh_token',
+				'refresh_token' => $refresh_token,
+				'client_id' => $client_id,
+				'client_secret' => $client_secret,
+			],
+		]);
+
+		if (is_wp_error($res)) {
+			return $res;
+		}
+
+		$code_http = (int)wp_remote_retrieve_response_code($res);
+		$body_raw = (string)wp_remote_retrieve_body($res);
+		$body = json_decode($body_raw, true);
+
+		if ($code_http < 200 || $code_http >= 300) {
+			$msg = 'Erreur refresh token LinkedIn (HTTP ' . $code_http . ').';
+			if (is_array($body) && !empty($body['error_description'])) {
+				$msg .= ' ' . (string)$body['error_description'];
+			}
+			return new WP_Error('pkliap_token_refresh_failed', $msg);
+		}
+
+		if (!is_array($body) || empty($body['access_token'])) {
+			return new WP_Error('pkliap_token_refresh_failed', 'Réponse refresh token LinkedIn invalide.');
+		}
+
+		return $body;
+	}
+
+	/** @return array|WP_Error */
 	private static function linkedin_api_post(string $path, array $payload, string $access_token, array $extra_headers = []) {
 		$url = 'https://api.linkedin.com' . $path;
 		$res = wp_remote_post($url, [
@@ -3257,6 +3932,52 @@ final class PKLIAP_Plugin {
 			'headers' => [],
 			'body' => $body,
 		];
+	}
+
+	/** @return array|WP_Error */
+	private static function maybe_refresh_linkedin_token(array $opt) {
+		$access_exp = (int)($opt['access_token_expires_at'] ?? 0);
+		$refresh_token = (string)($opt['refresh_token'] ?? '');
+		$refresh_exp = (int)($opt['refresh_token_expires_at'] ?? 0);
+
+		if ($access_exp <= 0 || time() < $access_exp) {
+			return true;
+		}
+
+		if ($refresh_token === '') {
+			return new WP_Error('pkliap_no_refresh_token', 'Token LinkedIn expiré et aucun refresh token disponible. Reconnecte le compte.');
+		}
+		if ($refresh_exp > 0 && time() >= $refresh_exp) {
+			return new WP_Error('pkliap_refresh_token_expired', 'Refresh token LinkedIn expiré. Reconnecte le compte.');
+		}
+
+		$token = self::linkedin_refresh_access_token((string)$opt['client_id'], (string)$opt['client_secret'], $refresh_token);
+		if (is_wp_error($token)) {
+			return $token;
+		}
+
+		$access_token = (string)($token['access_token'] ?? '');
+		$expires_in = (int)($token['expires_in'] ?? 0);
+		$new_refresh_token = (string)($token['refresh_token'] ?? $refresh_token);
+		$new_refresh_expires_in = (int)($token['refresh_token_expires_in'] ?? 0);
+
+		if ($access_token === '') {
+			return new WP_Error('pkliap_token_refresh_failed', 'LinkedIn a renvoyé un access token vide.');
+		}
+
+		self::set_tokens([
+			'access_token' => $access_token,
+			'access_token_expires_at' => $expires_in ? (time() + $expires_in - 60) : 0,
+			'refresh_token' => $new_refresh_token,
+			'refresh_token_expires_at' => $new_refresh_expires_in ? (time() + $new_refresh_expires_in - 60) : $refresh_exp,
+		]);
+
+		self::update_options([
+			'last_oauth_at' => time(),
+			'last_oauth_error' => '',
+		]);
+
+		return true;
 	}
 
 	/** @return string|WP_Error */
