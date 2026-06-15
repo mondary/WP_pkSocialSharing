@@ -488,6 +488,16 @@ final class PKLIAP_Plugin {
 		$out['ig_enabled'] = array_key_exists('ig_enabled', $value) ? (empty($value['ig_enabled']) ? 0 : 1) : (int)$current['ig_enabled'];
 		$out['ig_user_id'] = array_key_exists('ig_user_id', $value) ? sanitize_text_field((string)$value['ig_user_id']) : (string)$current['ig_user_id'];
 		$out['ig_access_token'] = array_key_exists('ig_access_token', $value) ? sanitize_text_field((string)$value['ig_access_token']) : (string)$current['ig_access_token'];
+
+		// Facebook et Instagram partagent le meme token Meta: synchroniser automatiquement.
+		$fb_token_changed = (array_key_exists('fb_access_token', $value) && (string)$value['fb_access_token'] !== (string)$current['fb_access_token']);
+		$ig_token_changed = (array_key_exists('ig_access_token', $value) && (string)$value['ig_access_token'] !== (string)$current['ig_access_token']);
+		if ($fb_token_changed && !$ig_token_changed) {
+			$out['ig_access_token'] = $out['fb_access_token'];
+		} elseif ($ig_token_changed && !$fb_token_changed) {
+			$out['fb_access_token'] = $out['ig_access_token'];
+		}
+
 		$ig_credentials_changed = ((string)$out['ig_user_id'] !== (string)$current['ig_user_id']) || ((string)$out['ig_access_token'] !== (string)$current['ig_access_token']);
 		$out['threads_enabled'] = array_key_exists('threads_enabled', $value) ? (empty($value['threads_enabled']) ? 0 : 1) : (int)$current['threads_enabled'];
 		$out['threads_user_id'] = array_key_exists('threads_user_id', $value) ? sanitize_text_field((string)$value['threads_user_id']) : (string)$current['threads_user_id'];
