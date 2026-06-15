@@ -1,4 +1,7 @@
 <?php
+if (function_exists('opcache_invalidate')) {
+	opcache_invalidate(__FILE__, true);
+}
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
@@ -1225,11 +1228,22 @@ final class PKLIAP_Plugin {
 							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
 						</form>
 
-						<?php if (!empty($opt['last_fb_error']) && stripos((string)$opt['last_fb_error'], '403') !== false): ?>
+						<?php
+						$fb_err = (string)$opt['last_fb_error'];
+						$fb_err_is_permission = (stripos($fb_err, '403') !== false || stripos($fb_err, 'permission') !== false);
+						$fb_err_is_expired = (stripos($fb_err, 'expired') !== false || stripos($fb_err, 'Session has expired') !== false);
+						if (!empty($fb_err) && ($fb_err_is_permission || $fb_err_is_expired)): ?>
 						<div class="pks-card pks-card--accent-bad">
-							<div class="pks-card-title">Depannage Facebook (Erreur 403 - Permissions)</div>
-							<p class="pks-info" style="margin:-4px 0 12px;">L'erreur ci-dessous indique que le token n'a pas les permissions requises. Suis ces etapes dans l'ordre pour regenerer un token valide.</p>
-							<p class="description" style="color:#b32d2e;margin-bottom:12px;"><strong>Erreur actuelle:</strong> <?php echo esc_html((string)$opt['last_fb_error']); ?></p>
+							<div class="pks-card-title">Depannage Facebook<?php echo $fb_err_is_permission ? ' (Erreur 403 - Permissions)' : ' (Token expire)'; ?></div>
+							<p class="pks-info" style="margin:-4px 0 12px;">
+								<?php if ($fb_err_is_permission): ?>
+									L'erreur indique que le token n'a pas les permissions requises. Il faut regenerer un token avec les bonnes permissions.
+								<?php else: ?>
+									Le Page Access Token a expire. Il faut en generer un nouveau. Les tokens de Page expirent generalement apres 60 jours.
+								<?php endif; ?>
+								Suis ces etapes dans l'ordre.
+							</p>
+							<p class="description" style="color:#b32d2e;margin-bottom:12px;"><strong>Erreur actuelle:</strong> <?php echo esc_html($fb_err); ?></p>
 							<div class="pks-checkrow" style="margin-bottom:12px;">
 								<span class="pks-pill pks-pill--warn">1</span>
 								<div>
@@ -1243,8 +1257,9 @@ final class PKLIAP_Plugin {
 							<div class="pks-checkrow" style="margin-bottom:12px;">
 								<span class="pks-pill pks-pill--warn">2</span>
 								<div>
-									<strong>Selectionner la bonne application</strong>
+									<strong>Selectionner la bonne application et le type Page</strong>
 									<p>En haut a droite du Graph Explorer, verifie que le menu deroulant <em>Application</em> pointe bien sur ton app Meta (celle liee a ce site).</p>
+									<p style="margin-top:6px;"><strong>Important:</strong> dans le menu <em>Utilisateur ou Page</em>, choisis <strong>Page</strong> (pas "Token utilisateur"). Si tu ne vois pas ta Page, clique sur <em>Generer un jeton d'acces</em> et autorise l'acces a ta Page.</p>
 								</div>
 							</div>
 							<div class="pks-checkrow" style="margin-bottom:12px;">
@@ -1264,9 +1279,11 @@ final class PKLIAP_Plugin {
 								<span class="pks-pill pks-pill--warn">4</span>
 								<div>
 									<strong>Recuperer le Page Access Token</strong>
-									<p>Dans le champ de requete du Graph Explorer, lance:</p>
+									<p>Si tu as bien choisi <strong>Page</strong> a l'etape 2, le token affiche en haut est deja le bon (Page Access Token). Copie-le directement.</p>
+									<p style="margin-top:8px;">Sinon, dans le champ de requete, lance:</p>
 									<p><code>me/accounts?fields=id,name,access_token</code></p>
-									<p style="margin-top:6px;">Dans la reponse JSON, repere ta Page et copie la valeur de <code>access_token</code> (pas le token utilisateur en haut, bien celui de la Page).</p>
+									<p style="margin-top:6px;">Dans la reponse JSON, repere ta Page et copie la valeur de <code>access_token</code>.</p>
+									<p style="margin-top:6px;color:#b32d2e;"><strong>Attention:</strong> ne copie PAS le "Token utilisateur" affiche en haut si le menu indique encore "Token utilisateur". Il faut absolument un token de <strong>Page</strong>.</p>
 								</div>
 							</div>
 							<div class="pks-checkrow" style="margin-bottom:12px;">
@@ -1274,6 +1291,7 @@ final class PKLIAP_Plugin {
 								<div>
 									<strong>Coller le token dans les reglages</strong>
 									<p>Remonte dans la carte <em>Facebook: connexion en 3 etapes</em> ci-dessus, colle le <code>access_token</code> dans le champ <strong>Page Access Token</strong>, puis clique <strong>Enregistrer</strong>.</p>
+									<p style="margin-top:6px;"><strong>Instagram:</strong> si tu utilises aussi Instagram, colle ce meme token dans l'onglet Instagram &gt; <strong>Access Token</strong>. C'est le meme token Meta pour les deux reseaux.</p>
 								</div>
 							</div>
 							<div class="pks-checkrow">
@@ -2364,6 +2382,52 @@ final class PKLIAP_Plugin {
 		exit;
 	}
 
+	private static function maybe_recheck_network_errors(string $active_network, array $opt): void {
+		if ($active_network === 'dashboard') {
+			return;
+		}
+		if ($active_network === 'linkedin' && !empty($opt['access_token'])) {
+			$me_id = self::linkedin_get_member_id((string)$opt['access_token']);
+			if (is_wp_error($me_id)) {
+				self::update_options(['last_share_error' => $me_id->get_error_message(), 'last_share_error_at' => time()]);
+			} else {
+				self::update_options(['last_share_error' => '', 'last_share_error_at' => 0]);
+			}
+		}
+		if ($active_network === 'x' && !empty($opt['x_access_token'])) {
+			$x_check = self::x_get_me($opt);
+			if (is_wp_error($x_check)) {
+				self::update_options(['last_x_error' => $x_check->get_error_message(), 'last_x_error_at' => time()]);
+			} else {
+				self::update_options(['last_x_error' => '', 'last_x_error_at' => 0]);
+			}
+		}
+		if ($active_network === 'facebook' && !empty($opt['fb_access_token'])) {
+			$fb_check = self::meta_graph_get('/me', ['fields' => 'id'], (string)$opt['fb_access_token']);
+			if (is_wp_error($fb_check)) {
+				self::update_options(['last_fb_error' => $fb_check->get_error_message(), 'last_fb_error_at' => time()]);
+			} else {
+				self::update_options(['last_fb_error' => '', 'last_fb_error_at' => 0]);
+			}
+		}
+		if ($active_network === 'instagram' && !empty($opt['ig_access_token'])) {
+			$ig_check = self::meta_graph_get('/' . rawurlencode((string)$opt['ig_user_id']), ['fields' => 'id'], (string)$opt['ig_access_token']);
+			if (is_wp_error($ig_check)) {
+				self::update_options(['last_ig_error' => $ig_check->get_error_message(), 'last_ig_error_at' => time()]);
+			} else {
+				self::update_options(['last_ig_error' => '', 'last_ig_error_at' => 0]);
+			}
+		}
+		if ($active_network === 'threads' && !empty($opt['threads_access_token'])) {
+			$threads_check = self::threads_api_get('/me', ['fields' => 'id,username'], (string)$opt['threads_access_token']);
+			if (is_wp_error($threads_check)) {
+				self::update_options(['last_threads_error' => $threads_check->get_error_message(), 'last_threads_error_at' => time()]);
+			} else {
+				self::update_options(['last_threads_error' => '', 'last_threads_error_at' => 0]);
+			}
+		}
+	}
+
 	public static function handle_dry_run_connections(): void {
 		if (!current_user_can('manage_options')) {
 			wp_die('Forbidden');
@@ -2797,7 +2861,58 @@ final class PKLIAP_Plugin {
 			}
 		}
 
-		// On garde le cron comme secours et pour les réseaux non traités immédiatement.
+		// Facebook traité immédiatement pour ne pas dépendre uniquement du WP-Cron.
+		if (!empty($opt['fb_enabled']) && (!$fb_already || !empty($opt['share_on_update']))) {
+			try {
+				$fb_res = self::share_post_to_facebook($post->ID, false);
+				if (is_wp_error($fb_res)) {
+					self::handle_share_error('facebook', $post->ID, $fb_res->get_error_message(), 'last_fb_error');
+					self::maybe_notify_admin_failure('facebook', $post->ID, $fb_res->get_error_message());
+				} else {
+					self::update_options(['last_fb_error' => '', 'last_fb_error_at' => 0]);
+					self::debug_log_event("Immediate Facebook share success for post #{$post->ID}.");
+				}
+			} catch (Throwable $e) {
+				self::handle_share_error('facebook', $post->ID, $e->getMessage(), 'last_fb_error');
+				self::maybe_notify_admin_failure('facebook', $post->ID, $e->getMessage());
+			}
+		}
+
+		// Instagram traité immédiatement pour ne pas dépendre uniquement du WP-Cron.
+		if (!empty($opt['ig_enabled']) && (!$ig_already || !empty($opt['share_on_update']))) {
+			try {
+				$ig_res = self::share_post_to_instagram($post->ID, false);
+				if (is_wp_error($ig_res)) {
+					self::handle_share_error('instagram', $post->ID, $ig_res->get_error_message(), 'last_ig_error');
+					self::maybe_notify_admin_failure('instagram', $post->ID, $ig_res->get_error_message());
+				} else {
+					self::update_options(['last_ig_error' => '', 'last_ig_error_at' => 0]);
+					self::debug_log_event("Immediate Instagram share success for post #{$post->ID}.");
+				}
+			} catch (Throwable $e) {
+				self::handle_share_error('instagram', $post->ID, $e->getMessage(), 'last_ig_error');
+				self::maybe_notify_admin_failure('instagram', $post->ID, $e->getMessage());
+			}
+		}
+
+		// Threads traité immédiatement pour ne pas dépendre uniquement du WP-Cron.
+		if (!empty($opt['threads_enabled']) && (!$threads_already || !empty($opt['share_on_update']))) {
+			try {
+				$threads_res = self::share_post_to_threads($post->ID, false);
+				if (is_wp_error($threads_res)) {
+					self::handle_share_error('threads', $post->ID, $threads_res->get_error_message(), 'last_threads_error');
+					self::maybe_notify_admin_failure('threads', $post->ID, $threads_res->get_error_message());
+				} else {
+					self::update_options(['last_threads_error' => '', 'last_threads_error_at' => 0]);
+					self::debug_log_event("Immediate Threads share success for post #{$post->ID}.");
+				}
+			} catch (Throwable $e) {
+				self::handle_share_error('threads', $post->ID, $e->getMessage(), 'last_threads_error');
+				self::maybe_notify_admin_failure('threads', $post->ID, $e->getMessage());
+			}
+		}
+
+		// On garde le cron comme secours pour les réseaux qui auraient échoué.
 		wp_schedule_single_event(time(), 'pkliap_async_share_task', [$post->ID]);
 	}
 

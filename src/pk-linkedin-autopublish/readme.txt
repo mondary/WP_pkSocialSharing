@@ -1,32 +1,50 @@
 === PK LinkedIn Auto Publish ===
 Contributors: pk
-Tags: linkedin, social, autopublish
+Tags: linkedin, facebook, instagram, threads, x, twitter, social, autopublish
 Requires at least: 6.0
-Tested up to: 6.5
+Tested up to: 7.0
 Requires PHP: 7.4
 Stable tag: 0.73
 License: GPLv2 or later
 
-Publie automatiquement vos articles WordPress sur LinkedIn et X lors de la publication.
+Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram et Threads lors de la publication.
 
 == Description ==
 
-Fonctionnalités :
+Fonctionnalites :
 
-* Publication automatique à la mise en ligne d’un article
-* Utilise l’image mise en avant + extrait + lien (shortlink WP si disponible)
-* Support du partage sur un profil (urn:li:person:*) ou une page (urn:li:organization:*)
-* Publication X via l’API ou via le navigateur si les crédits API X sont épuisés
-* Page de réglages dans Réglages → LinkedIn Auto Publish
+* Publication automatique sur 5 reseaux : LinkedIn, X (Twitter), Facebook, Instagram, Threads
+* Traitement immediat a la publication (ne depend pas de WP-Cron)
+* Image mise en avant + extrait + lien (shortlink WP si disponible)
+* Personnalisation independante par reseau : prefixe, suffixe, template, ordre du contenu
+* Support profil LinkedIn (urn:li:person:*) ou page (urn:li:organization:*)
+* Publication X via l'API ou via le navigateur si les credits API X sont epuises
+* Facebook : publication sur une Page via le Graph API (Page Access Token)
+* Instagram : publication de posts image via l'API Instagram Graph
+* Threads : publication via l'API Threads
+* Guide de depannage integre dans les reglages (erreurs 403, tokens expires)
+* Journal de debug interne visible dans l'admin
+* Page de reglages dans Reglages > WP PK SocialSharing
 
 == Installation ==
 
-1. Téléversez le dossier `pk-linkedin-autopublish` dans `wp-content/plugins/`
+1. Televersez le dossier `pk-linkedin-autopublish` dans `wp-content/plugins/`
 2. Activez le plugin
-3. Configurez votre app LinkedIn (Client ID / Secret, Redirect URI) puis connectez-vous depuis la page de réglages.
+3. Configurez les reseaux souhaites depuis l'onglet correspondant dans la page de reglages
 
 == Notes ==
 
-LinkedIn impose des contraintes d’accès à l’API (scopes, validation d’application). Assurez-vous que votre app a bien les permissions nécessaires.
+* LinkedIn impose des contraintes d'acces a l'API (scopes, validation d'application).
+* La publication X via l'API necessite des credits sur le compte developpeur X. Si X renvoie HTTP 402, utilisez "Publier via navigateur" ou rechargez les credits.
+* Facebook et Instagram necessitent un Page Access Token Meta avec les permissions `pages_show_list`, `pages_read_engagement` et `pages_manage_posts`.
+* Les tokens Meta expirent generalement apres 60 jours. Un guide de regeneration est affiche automatiquement en cas d'erreur.
 
-La publication X via l’API nécessite des crédits sur le compte développeur X. Si X renvoie `HTTP 402`, utilisez `Publier via navigateur` dans l’interface du plugin ou rechargez les crédits du compte X Developer.
+== Changelog ==
+
+= 0.73 =
+* Publication immediate pour Facebook, Instagram et Threads (plus uniquement via WP-Cron)
+* Ajout de la methode `maybe_recheck_network_errors` pour rafraichir les erreurs a l'ouverture d'un onglet
+* Carte de depannage Facebook amelioree : couvre les erreurs 403 (permissions) et 400 (token expire)
+* Instructions elargies : distinction Token utilisateur / Page Token, rappel Instagram
+* Permissions Facebook corrigees dans les instructions (ajout de `pages_read_engagement`)
+* Support Threads complet (API, reglages, publication, tests)
