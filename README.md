@@ -1,8 +1,8 @@
 # PK LinkedIn Auto Publish (WordPress)
 
-Plugin WordPress “maison” pour publier automatiquement sur LinkedIn et X à la publication d’un article (image mise en avant + extrait + lien).
+Plugin WordPress “maison” pour publier automatiquement sur LinkedIn, X, Facebook, Instagram, Threads et Medium à la publication d’un article.
 
-**Build actuel :** `extension/pk-linkedin-autopublish-v0.64.zip`
+**Version actuelle :** `0.74`
 
 ## 📁 Structure du dépôt
 
@@ -10,16 +10,16 @@ Plugin WordPress “maison” pour publier automatiquement sur LinkedIn et X à 
 .
 ├── src/
 │   └── pk-linkedin-autopublish/        # Code du plugin
-└── extension/
-    └── pk-linkedin-autopublish-v0.64.zip
+└── extension/                           # Anciens builds zip ignores par git
 ```
 
-## 🚀 Installation (sur ton WordPress)
+## 🚀 Installation / mise à jour
 
-1. WP Admin → **Extensions** → **Ajouter** → **Téléverser une extension**
-2. Choisir `extension/pk-linkedin-autopublish-v0.64.zip`
-3. Activer le plugin
-4. WP Admin → **Réglages → LinkedIn Auto Publish**
+1. Copier le dossier `src/pk-linkedin-autopublish/` dans `wp-content/plugins/pk-linkedin-autopublish/`
+2. Activer ou recharger le plugin
+3. WP Admin → **WP PK SocialSharing**
+
+Le plugin expose aussi une route de synchronisation REST sous `pksocialsharing/v1/sync-plugin` pour pousser les fichiers source sans zip quand le plugin est déjà installé.
 
 ## 🔑 Pré-requis LinkedIn (API)
 
@@ -41,10 +41,23 @@ Pour que ça marche, il faut une app LinkedIn configurée avec :
 
 La publication X via l’API dépend des crédits du compte développeur X. Si X renvoie `HTTP 402`, la publication API est bloquée tant que le compte n’a pas de crédits actifs.
 
-Le plugin propose deux modes :
+Le plugin propose plusieurs voies :
 
+- automatique immédiat à la publication
+- retry WP-Cron toutes les 5 minutes pour les articles publiés non encore partagés
+- fallback cron serveur/WP-CLI : `wp pksocialsharing retry --network=x --limit=20`
 - `Publier maintenant` : publication via l’API X, nécessite des crédits
 - `Publier via navigateur` : ouvre `x.com/intent/tweet` avec le texte prérempli, sans consommer de crédits API
+
+## 🔑 Pré-requis Medium
+
+Medium utilise un **integration token**. Dans l’onglet Medium du plugin :
+
+- coller le token Medium
+- laisser le plugin détecter le User ID via `/v1/me`, ou le renseigner manuellement
+- choisir le statut : `public`, `draft` ou `unlisted`
+
+Le post Medium reprend le contenu HTML de l’article WordPress et renseigne l’URL canonique vers l’article original.
 
 ## ⚙️ Réglages importants
 
@@ -53,6 +66,7 @@ Le plugin propose deux modes :
 - **Types de contenu** : cocher `post` (et/ou autres post types publics)
 - **Lien court** : utilise `wp_get_shortlink()` si disponible
 - **X** : le texte publié peut être personnalisé, et l’interface affiche clairement si l’API est bloquée par des crédits insuffisants
+- **Medium** : publication via token, avec URL canonique WordPress
 
 ## 🧪 Test rapide
 
@@ -61,7 +75,8 @@ Dans la page de réglages du plugin :
 1. Connecter LinkedIn
 2. Choisir un article publié
 3. Cliquer “Publier maintenant” pour LinkedIn
-4. Pour X, cliquer `Publier maintenant` si l’API a des crédits, sinon `Publier via navigateur`
+4. Pour X, cliquer `Publier maintenant` si l’API a des crédits, sinon vérifier le retry cron/CLI ou utiliser `Publier via navigateur`
+5. Pour Medium, configurer le token puis cliquer `Publier maintenant` dans l’onglet Medium
 
 ## 🧩 Notes
 

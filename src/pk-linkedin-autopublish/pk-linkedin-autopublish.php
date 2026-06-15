@@ -4,8 +4,8 @@ if (function_exists('opcache_invalidate')) {
 }
 /**
  * Plugin Name: PK LinkedIn Auto Publish
- * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.73
+ * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
+ * Version: 0.74
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * Requires at least: 6.0
@@ -33,6 +33,10 @@ final class PKLIAP_Plugin {
 	const META_IG_PERMALINK = '_pkliap_ig_permalink';
 	const META_THREADS_SHARED_AT = '_pkliap_threads_shared_at';
 	const META_THREADS_POST_ID = '_pkliap_threads_post_id';
+	const META_MEDIUM_SHARED_AT = '_pkliap_medium_shared_at';
+	const META_MEDIUM_POST_ID = '_pkliap_medium_post_id';
+	const META_MEDIUM_POST_URL = '_pkliap_medium_post_url';
+	const CRON_RETRY_HOOK = 'pkliap_retry_pending_shares';
 	const SYNC_NAMESPACE = 'pksocialsharing/v1';
 	const SYNC_SLUG = 'pk-linkedin-autopublish';
 
@@ -43,6 +47,8 @@ final class PKLIAP_Plugin {
 		add_action('admin_bar_menu', [__CLASS__, 'admin_bar_menu'], 100);
 		add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_plugins_icon']);
 		add_action('rest_api_init', [__CLASS__, 'register_rest_routes']);
+		add_filter('cron_schedules', [__CLASS__, 'cron_schedules']);
+		add_action('init', [__CLASS__, 'maybe_schedule_retry_cron']);
 
 		add_action('admin_post_pkliap_connect', [__CLASS__, 'handle_connect']);
 		add_action('admin_post_pkliap_oauth_callback', [__CLASS__, 'handle_oauth_callback']);
@@ -61,6 +67,31 @@ final class PKLIAP_Plugin {
 
 		add_action('transition_post_status', [__CLASS__, 'on_transition_post_status'], 10, 3);
 		add_action('pkliap_async_share_task', [__CLASS__, 'do_async_share'], 10, 1);
+		add_action(self::CRON_RETRY_HOOK, [__CLASS__, 'do_retry_pending_shares']);
+
+		if (defined('WP_CLI') && WP_CLI) {
+			WP_CLI::add_command('pksocialsharing retry', [__CLASS__, 'cli_retry_pending_shares']);
+		}
+	}
+
+	public static function cron_schedules(array $schedules): array {
+		if (!isset($schedules['pkliap_five_minutes'])) {
+			$schedules['pkliap_five_minutes'] = [
+				'interval' => 5 * MINUTE_IN_SECONDS,
+				'display' => 'Every 5 minutes (PK SocialSharing)',
+			];
+		}
+		return $schedules;
+	}
+
+	public static function maybe_schedule_retry_cron(): void {
+		if (!wp_next_scheduled(self::CRON_RETRY_HOOK)) {
+			wp_schedule_event(time() + MINUTE_IN_SECONDS, 'pkliap_five_minutes', self::CRON_RETRY_HOOK);
+		}
+	}
+
+	public static function deactivate(): void {
+		wp_clear_scheduled_hook(self::CRON_RETRY_HOOK);
 	}
 
 	public static function enqueue_plugins_icon(string $hook): void {
@@ -337,6 +368,12 @@ final class PKLIAP_Plugin {
 			'threads_access_token' => '',
 			'last_threads_error' => '',
 			'last_threads_error_at' => 0,
+			'medium_enabled' => 0,
+			'medium_user_id' => '',
+			'medium_access_token' => '',
+			'medium_publish_status' => 'public',
+			'last_medium_error' => '',
+			'last_medium_error_at' => 0,
 		];
 	}
 
@@ -503,6 +540,11 @@ final class PKLIAP_Plugin {
 		$out['threads_user_id'] = array_key_exists('threads_user_id', $value) ? sanitize_text_field((string)$value['threads_user_id']) : (string)$current['threads_user_id'];
 		$out['threads_access_token'] = array_key_exists('threads_access_token', $value) ? sanitize_text_field((string)$value['threads_access_token']) : (string)$current['threads_access_token'];
 		$threads_credentials_changed = ((string)$out['threads_user_id'] !== (string)$current['threads_user_id']) || ((string)$out['threads_access_token'] !== (string)$current['threads_access_token']);
+		$out['medium_enabled'] = array_key_exists('medium_enabled', $value) ? (empty($value['medium_enabled']) ? 0 : 1) : (int)$current['medium_enabled'];
+		$out['medium_user_id'] = array_key_exists('medium_user_id', $value) ? sanitize_text_field((string)$value['medium_user_id']) : (string)$current['medium_user_id'];
+		$out['medium_access_token'] = array_key_exists('medium_access_token', $value) ? sanitize_text_field((string)$value['medium_access_token']) : (string)$current['medium_access_token'];
+		$out['medium_publish_status'] = array_key_exists('medium_publish_status', $value) && in_array((string)$value['medium_publish_status'], ['draft', 'public', 'unlisted'], true) ? (string)$value['medium_publish_status'] : (string)$current['medium_publish_status'];
+		$medium_credentials_changed = ((string)$out['medium_user_id'] !== (string)$current['medium_user_id']) || ((string)$out['medium_access_token'] !== (string)$current['medium_access_token']);
 		$out['require_image'] = array_key_exists('require_image', $value) ? (empty($value['require_image']) ? 0 : 1) : (int)$current['require_image'];
 		if (array_key_exists('media_mode', $value)) {
 			$out['media_mode'] = in_array((string)$value['media_mode'], ['opengraph', 'upload'], true) ? (string)$value['media_mode'] : $defaults['media_mode'];
@@ -543,6 +585,8 @@ final class PKLIAP_Plugin {
 			'last_ig_error_at',
 			'last_threads_error',
 			'last_threads_error_at',
+			'last_medium_error',
+			'last_medium_error_at',
 		] as $k) {
 			$out[$k] = $current[$k];
 		}
@@ -553,6 +597,10 @@ final class PKLIAP_Plugin {
 		if ($threads_credentials_changed) {
 			$out['last_threads_error'] = '';
 			$out['last_threads_error_at'] = 0;
+		}
+		if ($medium_credentials_changed) {
+			$out['last_medium_error'] = '';
+			$out['last_medium_error_at'] = 0;
 		}
 
 		return $out;
@@ -592,6 +640,8 @@ final class PKLIAP_Plugin {
 		$link_meta_threads_docs = 'https://developers.facebook.com/docs/threads/posts/';
 		$link_meta_threads_get_started = 'https://developers.facebook.com/docs/threads/get-started/';
 		$link_meta_threads_tokens = 'https://developers.facebook.com/docs/threads/get-started/get-access-tokens-and-permissions/';
+		$link_medium_docs = 'https://github.com/Medium/medium-api-docs';
+		$link_medium_settings = 'https://medium.com/me/settings';
 
 		$recommended_redirect_uri = self::admin_url_action('pkliap_oauth_callback');
 		$config_redirect_uri = $opt['redirect_uri'] ?: $recommended_redirect_uri;
@@ -600,7 +650,7 @@ final class PKLIAP_Plugin {
 		$redirect_is_recommended = ($config_redirect_uri === $recommended_redirect_uri);
 		$has_author_urn = !empty($opt['author_urn']);
 		$active_network = isset($_GET['network']) ? sanitize_key((string)wp_unslash($_GET['network'])) : 'dashboard';
-		if (!in_array($active_network, ['dashboard', 'linkedin', 'x', 'facebook', 'instagram', 'threads'], true)) {
+		if (!in_array($active_network, ['dashboard', 'linkedin', 'x', 'facebook', 'instagram', 'threads', 'medium'], true)) {
 			$active_network = 'dashboard';
 		}
 		self::maybe_recheck_network_errors($active_network, $opt);
@@ -613,6 +663,7 @@ final class PKLIAP_Plugin {
 		$link_tab_facebook = add_query_arg('network', 'facebook', $settings_base_url);
 		$link_tab_instagram = add_query_arg('network', 'instagram', $settings_base_url);
 		$link_tab_threads = add_query_arg('network', 'threads', $settings_base_url);
+		$link_tab_medium = add_query_arg('network', 'medium', $settings_base_url);
 		$x_callback_uri = self::admin_url_action('pkliap_x_oauth_callback');
 		$x_connected = (!empty($opt['x_access_token']) && !empty($opt['x_access_token_secret']));
 
@@ -620,7 +671,8 @@ final class PKLIAP_Plugin {
 		$fb_connected = (!empty($opt['fb_page_id']) && !empty($opt['fb_access_token']));
 		$ig_connected = (!empty($opt['ig_user_id']) && !empty($opt['ig_access_token']));
 		$threads_connected = (!empty($opt['threads_user_id']) && !empty($opt['threads_access_token']));
-		$health = self::build_connection_health($opt, $has_token, $token_not_expired, $has_author_urn, $x_connected, $fb_connected, $ig_connected, $threads_connected);
+		$medium_connected = (!empty($opt['medium_user_id']) && !empty($opt['medium_access_token']));
+		$health = self::build_connection_health($opt, $has_token, $token_not_expired, $has_author_urn, $x_connected, $fb_connected, $ig_connected, $threads_connected, $medium_connected);
 
 		$tz = function_exists('wp_timezone') ? wp_timezone() : new DateTimeZone('UTC');
 		$today_start = (new DateTimeImmutable('today', $tz))->getTimestamp();
@@ -651,6 +703,7 @@ final class PKLIAP_Plugin {
 			'facebook' => ['label' => 'Facebook',  'enabled' => !empty($opt['fb_enabled']), 'connected' => $fb_connected,       'meta' => self::META_FB_SHARED_AT, 'err_key' => 'last_fb_error'],
 			'instagram'=> ['label' => 'Instagram', 'enabled' => !empty($opt['ig_enabled']), 'connected' => $ig_connected,       'meta' => self::META_IG_SHARED_AT, 'err_key' => 'last_ig_error'],
 			'threads'  => ['label' => 'Threads',   'enabled' => !empty($opt['threads_enabled']), 'connected' => $threads_connected, 'meta' => self::META_THREADS_SHARED_AT, 'err_key' => 'last_threads_error'],
+			'medium'   => ['label' => 'Medium',    'enabled' => !empty($opt['medium_enabled']), 'connected' => $medium_connected, 'meta' => self::META_MEDIUM_SHARED_AT, 'err_key' => 'last_medium_error'],
 		];
 		$planned_by_net = [];
 		$done_by_net = [];
@@ -824,6 +877,10 @@ final class PKLIAP_Plugin {
 						Threads
 						<span class="pks-network-pill">V1</span>
 					</a>
+					<a class="pks-network-tab <?php echo $active_network === 'medium' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_medium); ?>" role="tab" aria-selected="<?php echo $active_network === 'medium' ? 'true' : 'false'; ?>">
+						Medium
+						<span class="pks-network-pill">V1</span>
+					</a>
 				</div>
 
 				<?php if ($active_network === 'dashboard'): ?>
@@ -903,6 +960,13 @@ final class PKLIAP_Plugin {
 									<div>
 										<strong>Threads</strong>
 										<p><?php echo esc_html($health['threads']['message']); ?></p>
+									</div>
+								</div>
+								<div class="pks-checkrow">
+									<span class="pks-pill <?php echo $health['medium']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['medium']['ok'] ? 'OK' : 'KO'; ?></span>
+									<div>
+										<strong>Medium</strong>
+										<p><?php echo esc_html($health['medium']['message']); ?></p>
 									</div>
 								</div>
 							</div>
@@ -1049,6 +1113,7 @@ final class PKLIAP_Plugin {
 									<strong>Activer</strong>
 									<label class="pks-inline"><input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_enabled]" value="0"/><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_enabled]" value="1" <?php checked(1, (int)$opt['x_enabled']); ?>/> Publier automatiquement sur X</label>
 									<p>Le texte peut utiliser les réglages dédiés X ci-dessous, avec fallback sur LinkedIn si tu laisses les champs vides.</p>
+									<p>Automatisation: tentative immédiate à la publication, retry WP-Cron toutes les 5 minutes, et fallback serveur possible avec <code>wp pksocialsharing retry --network=x --limit=20</code>.</p>
 								</div>
 							</div>
 							<div class="pks-checkrow" style="margin-top:12px;">
@@ -1597,6 +1662,118 @@ final class PKLIAP_Plugin {
 											</td>
 											<td><?php echo $threads_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
 											<td><a class="button button-secondary" href="<?php echo esc_url($threads_action_url); ?>">Publier maintenant</a></td>
+										</tr>
+									<?php endforeach; ?>
+								<?php endif; ?>
+								</tbody>
+							</table>
+						</div>
+					</div>
+				<?php elseif ($active_network === 'medium'): ?>
+					<div class="pks-grid">
+						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
+							<div class="pks-card-title">Medium: connexion</div>
+							<?php settings_fields('pkliap'); ?>
+							<p class="pks-info" style="margin:-4px 0 12px;">Medium utilise un <strong>integration token</strong>. Le plugin peut détecter le User ID avec ce token, ou tu peux le coller manuellement.</p>
+							<div class="pks-checkrow" style="margin-bottom:12px;">
+								<span class="pks-pill pks-pill--warn">1</span>
+								<div>
+									<strong>Récupérer le token</strong>
+									<p>Ouvre les réglages Medium, section Integration tokens, puis génère un token pour ce plugin. Medium peut restreindre cette option selon les comptes.</p>
+									<p style="margin:8px 0 0;">
+										<a class="button button-primary" href="<?php echo esc_url($link_medium_settings); ?>" target="_blank" rel="noopener">Ouvrir Medium Settings</a>
+										<a class="button" href="<?php echo esc_url($link_medium_docs); ?>" target="_blank" rel="noopener">Docs API Medium</a>
+									</p>
+								</div>
+							</div>
+							<table class="form-table" role="presentation">
+								<tr>
+									<th scope="row">Medium Access Token</th>
+									<td>
+										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_access_token]" value="<?php echo esc_attr((string)$opt['medium_access_token']); ?>"/>
+										<p class="description">Token Medium avec permission de publication. Le plugin appelle <code>/v1/me</code> pour vérifier le compte.</p>
+									</td>
+								</tr>
+								<tr>
+									<th scope="row">Medium User ID</th>
+									<td>
+										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_user_id]" value="<?php echo esc_attr((string)$opt['medium_user_id']); ?>"/>
+										<p class="description">Optionnel si le token est valide: le plugin le remplit automatiquement après un test réussi.</p>
+									</td>
+								</tr>
+							</table>
+							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+						</form>
+
+						<form method="post" action="options.php" class="pks-card pks-card--accent-ok">
+							<div class="pks-card-title">Publication Medium</div>
+							<?php settings_fields('pkliap'); ?>
+							<label class="pks-inline"><input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_enabled]" value="0"/><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_enabled]" value="1" <?php checked(1, (int)$opt['medium_enabled']); ?>/> Publier automatiquement sur Medium</label>
+							<p class="pks-info" style="margin:8px 0 12px;">Le post Medium reprend le contenu HTML de l’article WordPress et renseigne l’URL canonique vers l’article original.</p>
+							<label>Statut de publication<br/>
+								<select name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_publish_status]">
+									<option value="public" <?php selected('public', (string)$opt['medium_publish_status']); ?>>Public</option>
+									<option value="draft" <?php selected('draft', (string)$opt['medium_publish_status']); ?>>Brouillon</option>
+									<option value="unlisted" <?php selected('unlisted', (string)$opt['medium_publish_status']); ?>>Non listé</option>
+								</select>
+							</label>
+							<?php if (!empty($opt['last_medium_error'])): ?>
+								<p class="description" style="color:#b32d2e;">Dernière erreur Medium: <?php echo esc_html((string)$opt['last_medium_error']); ?></p>
+								<p style="margin:8px 0 0;">
+									<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_clear_network_error') . '&network=medium', 'pkliap_clear_network_error_medium')); ?>">Effacer cette ancienne erreur</a>
+								</p>
+							<?php endif; ?>
+							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+						</form>
+
+						<div class="pks-card pks-card--wide">
+							<div class="pks-card-title">Test Medium</div>
+							<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié pour créer le post Medium.</p>
+							<?php
+							$posts = get_posts([
+								'post_type' => $opt['post_type_whitelist'],
+								'post_status' => 'publish',
+								'numberposts' => 20,
+								'orderby' => 'date',
+								'order' => 'DESC',
+							]);
+							?>
+							<table class="widefat striped" style="width:100%;">
+								<thead>
+									<tr>
+										<th style="width:60px;">ID</th>
+										<th style="width:64px;">Image</th>
+										<th>Article</th>
+										<th style="width:220px;">Statut Medium</th>
+										<th style="width:180px;">Action</th>
+									</tr>
+								</thead>
+								<tbody>
+								<?php if (!$posts): ?>
+									<tr><td colspan="5">Aucun article publié trouvé.</td></tr>
+								<?php else: ?>
+									<?php foreach ($posts as $p): ?>
+										<?php
+										$medium_shared_at = (int)get_post_meta($p->ID, self::META_MEDIUM_SHARED_AT, true);
+										$medium_post_id = (string)get_post_meta($p->ID, self::META_MEDIUM_POST_ID, true);
+										$medium_post_url = (string)get_post_meta($p->ID, self::META_MEDIUM_POST_URL, true);
+										$medium_status = $medium_shared_at ? ('Partagé le ' . esc_html(wp_date('Y-m-d H:i', $medium_shared_at)) . ($medium_post_id ? '<br/><code style="font-size:11px;">' . esc_html($medium_post_id) . '</code>' : '') . ($medium_post_url ? '<br/><a href="' . esc_url($medium_post_url) . '" target="_blank" rel="noopener">Voir sur Medium</a>' : '')) : 'Jamais partagé';
+										$medium_action_url = wp_nonce_url(self::admin_url_action('pkliap_test_post') . '&post_id=' . (int)$p->ID . '&network=medium', 'pkliap_test_post_' . (int)$p->ID);
+										$edit_url = get_edit_post_link($p->ID, '');
+										$thumb_html = get_the_post_thumbnail($p->ID, [48, 48], ['style' => 'width:48px;height:48px;object-fit:cover;border-radius:4px;']);
+										?>
+										<tr>
+											<td><?php echo (int)$p->ID; ?></td>
+											<td><?php echo $thumb_html ?: '<span style="opacity:.6;">-</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											<td>
+												<strong><?php echo esc_html($p->post_title ?: '(Sans titre)'); ?></strong>
+												<div class="row-actions">
+													<span><a href="<?php echo esc_url(get_permalink($p->ID)); ?>" target="_blank" rel="noopener">Voir</a> | </span>
+													<span><a href="<?php echo esc_url($edit_url ?: '#'); ?>">Modifier</a></span>
+												</div>
+											</td>
+											<td><?php echo $medium_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											<td><a class="button button-secondary" href="<?php echo esc_url($medium_action_url); ?>">Publier maintenant</a></td>
 										</tr>
 									<?php endforeach; ?>
 								<?php endif; ?>
@@ -2382,6 +2559,25 @@ final class PKLIAP_Plugin {
 				$messages[] = 'Threads: OK';
 			}
 		}
+		if (!empty($opt['medium_access_token'])) {
+			$medium_check = self::medium_get_me((string)$opt['medium_access_token']);
+			if (is_wp_error($medium_check)) {
+				self::update_options([
+					'last_medium_error' => $medium_check->get_error_message(),
+					'last_medium_error_at' => time(),
+				]);
+				$messages[] = 'Medium: ' . $medium_check->get_error_message();
+				$meta_ok = false;
+			} else {
+				$medium_user_id = (string)($medium_check['id'] ?? '');
+				self::update_options([
+					'medium_user_id' => $medium_user_id ?: (string)$opt['medium_user_id'],
+					'last_medium_error' => '',
+					'last_medium_error_at' => 0,
+				]);
+				$messages[] = 'Medium: OK';
+			}
+		}
 
 		if (!$messages) {
 			$messages[] = 'Aucune connexion active à vérifier.';
@@ -2434,6 +2630,19 @@ final class PKLIAP_Plugin {
 				self::update_options(['last_threads_error' => $threads_check->get_error_message(), 'last_threads_error_at' => time()]);
 			} else {
 				self::update_options(['last_threads_error' => '', 'last_threads_error_at' => 0]);
+			}
+		}
+		if ($active_network === 'medium' && !empty($opt['medium_access_token'])) {
+			$medium_check = self::medium_get_me((string)$opt['medium_access_token']);
+			if (is_wp_error($medium_check)) {
+				self::update_options(['last_medium_error' => $medium_check->get_error_message(), 'last_medium_error_at' => time()]);
+			} else {
+				$medium_user_id = (string)($medium_check['id'] ?? '');
+				self::update_options([
+					'medium_user_id' => $medium_user_id ?: (string)$opt['medium_user_id'],
+					'last_medium_error' => '',
+					'last_medium_error_at' => 0,
+				]);
 			}
 		}
 	}
@@ -2688,6 +2897,7 @@ final class PKLIAP_Plugin {
 			'facebook' => ['last_fb_error', 'last_fb_error_at'],
 			'instagram' => ['last_ig_error', 'last_ig_error_at'],
 			'threads' => ['last_threads_error', 'last_threads_error_at'],
+			'medium' => ['last_medium_error', 'last_medium_error_at'],
 			'x' => ['last_x_error', 'last_x_error_at'],
 			'linkedin' => ['last_share_error', 'last_share_error_at'],
 		];
@@ -2712,7 +2922,7 @@ final class PKLIAP_Plugin {
 		}
 		$post_id = isset($_REQUEST['post_id']) ? (int)$_REQUEST['post_id'] : 0;
 		$network = isset($_REQUEST['network']) ? sanitize_key((string)wp_unslash($_REQUEST['network'])) : 'linkedin';
-		if (!in_array($network, ['linkedin', 'x', 'facebook', 'instagram', 'threads'], true)) {
+		if (!in_array($network, ['linkedin', 'x', 'facebook', 'instagram', 'threads', 'medium'], true)) {
 			$network = 'linkedin';
 		}
 		if (!$post_id) {
@@ -2731,6 +2941,8 @@ final class PKLIAP_Plugin {
 				$res = self::share_post_to_instagram($post_id, true);
 			} elseif ($network === 'threads') {
 				$res = self::share_post_to_threads($post_id, true);
+			} elseif ($network === 'medium') {
+				$res = self::share_post_to_medium($post_id, true);
 			} else {
 				$res = self::share_post_to_linkedin($post_id, true);
 			}
@@ -2744,6 +2956,8 @@ final class PKLIAP_Plugin {
 				self::update_options(['last_ig_error' => $msg, 'last_ig_error_at' => time()]);
 			} elseif ($network === 'threads') {
 				self::update_options(['last_threads_error' => $msg, 'last_threads_error_at' => time()]);
+			} elseif ($network === 'medium') {
+				self::update_options(['last_medium_error' => $msg, 'last_medium_error_at' => time()]);
 			} else {
 				self::update_options(['last_share_error' => $msg, 'last_share_error_at' => time()]);
 			}
@@ -2766,6 +2980,9 @@ final class PKLIAP_Plugin {
 			} elseif ($network === 'threads') {
 				self::update_options(['last_threads_error' => $res->get_error_message(), 'last_threads_error_at' => time()]);
 				self::maybe_notify_admin_failure($network, $post_id, $res->get_error_message());
+			} elseif ($network === 'medium') {
+				self::update_options(['last_medium_error' => $res->get_error_message(), 'last_medium_error_at' => time()]);
+				self::maybe_notify_admin_failure($network, $post_id, $res->get_error_message());
 			} else {
 				self::update_options(['last_share_error' => $res->get_error_message(), 'last_share_error_at' => time()]);
 				self::maybe_notify_admin_failure($network, $post_id, $res->get_error_message());
@@ -2784,6 +3001,8 @@ final class PKLIAP_Plugin {
 			self::update_options(['last_ig_error' => '', 'last_ig_error_at' => 0]);
 		} elseif ($network === 'threads') {
 			self::update_options(['last_threads_error' => '', 'last_threads_error_at' => 0]);
+		} elseif ($network === 'medium') {
+			self::update_options(['last_medium_error' => '', 'last_medium_error_at' => 0]);
 		} else {
 			self::update_options(['last_share_error' => '', 'last_share_error_at' => 0]);
 		}
@@ -2796,6 +3015,8 @@ final class PKLIAP_Plugin {
 			$notice = 'Post Instagram envoyé.';
 		} elseif ($network === 'threads') {
 			$notice = 'Post Threads envoyé.';
+		} elseif ($network === 'medium') {
+			$notice = 'Post Medium envoyé.';
 		} else {
 			$notice = 'Post LinkedIn envoyé.';
 		}
@@ -2815,7 +3036,7 @@ final class PKLIAP_Plugin {
 		}
 
 		$opt = self::get_options();
-		if (empty($opt['enabled']) && empty($opt['x_enabled']) && empty($opt['fb_enabled']) && empty($opt['ig_enabled']) && empty($opt['threads_enabled'])) {
+		if (empty($opt['enabled']) && empty($opt['x_enabled']) && empty($opt['fb_enabled']) && empty($opt['ig_enabled']) && empty($opt['threads_enabled']) && empty($opt['medium_enabled'])) {
 			return;
 		}
 
@@ -2833,7 +3054,8 @@ final class PKLIAP_Plugin {
 		$fb_already = !empty(get_post_meta($post->ID, self::META_FB_SHARED_AT, true));
 		$ig_already = !empty(get_post_meta($post->ID, self::META_IG_SHARED_AT, true));
 		$threads_already = !empty(get_post_meta($post->ID, self::META_THREADS_SHARED_AT, true));
-		if (!empty($opt['only_once']) && $linkedin_already && $x_already && $fb_already && $ig_already && $threads_already && empty($opt['share_on_update'])) {
+		$medium_already = !empty(get_post_meta($post->ID, self::META_MEDIUM_SHARED_AT, true));
+		if (!empty($opt['only_once']) && $linkedin_already && $x_already && $fb_already && $ig_already && $threads_already && $medium_already && empty($opt['share_on_update'])) {
 			return;
 		}
 
@@ -2922,6 +3144,23 @@ final class PKLIAP_Plugin {
 			}
 		}
 
+		// Medium traité immédiatement pour ne pas dépendre uniquement du WP-Cron.
+		if (!empty($opt['medium_enabled']) && (!$medium_already || !empty($opt['share_on_update']))) {
+			try {
+				$medium_res = self::share_post_to_medium($post->ID, false);
+				if (is_wp_error($medium_res)) {
+					self::handle_share_error('medium', $post->ID, $medium_res->get_error_message(), 'last_medium_error');
+					self::maybe_notify_admin_failure('medium', $post->ID, $medium_res->get_error_message());
+				} else {
+					self::update_options(['last_medium_error' => '', 'last_medium_error_at' => 0]);
+					self::debug_log_event("Immediate Medium share success for post #{$post->ID}.");
+				}
+			} catch (Throwable $e) {
+				self::handle_share_error('medium', $post->ID, $e->getMessage(), 'last_medium_error');
+				self::maybe_notify_admin_failure('medium', $post->ID, $e->getMessage());
+			}
+		}
+
 		// On garde le cron comme secours pour les réseaux qui auraient échoué.
 		wp_schedule_single_event(time(), 'pkliap_async_share_task', [$post->ID]);
 	}
@@ -2937,6 +3176,7 @@ final class PKLIAP_Plugin {
 			'facebook'  => ['enabled' => !empty($opt['fb_enabled']), 'callback' => 'share_post_to_facebook',  'err_key' => 'last_fb_error'],
 			'instagram' => ['enabled' => !empty($opt['ig_enabled']), 'callback' => 'share_post_to_instagram', 'err_key' => 'last_ig_error'],
 			'threads'   => ['enabled' => !empty($opt['threads_enabled']), 'callback' => 'share_post_to_threads', 'err_key' => 'last_threads_error'],
+			'medium'    => ['enabled' => !empty($opt['medium_enabled']), 'callback' => 'share_post_to_medium', 'err_key' => 'last_medium_error'],
 		];
 
 		foreach ($networks as $net => $cfg) {
@@ -2949,6 +3189,7 @@ final class PKLIAP_Plugin {
 					'facebook' => self::META_FB_SHARED_AT,
 					'instagram' => self::META_IG_SHARED_AT,
 					'threads' => self::META_THREADS_SHARED_AT,
+					'medium' => self::META_MEDIUM_SHARED_AT,
 				];
 				if (!empty($opt['only_once']) && empty($opt['share_on_update']) && !empty($meta_by_net[$net]) && get_post_meta($post_id, $meta_by_net[$net], true)) {
 					self::debug_log_event("Auto share $net skipped for post #$post_id: already shared.");
@@ -2971,6 +3212,88 @@ final class PKLIAP_Plugin {
 		}
 	}
 
+	public static function do_retry_pending_shares(): void {
+		self::process_pending_shares('all', 10);
+	}
+
+	public static function cli_retry_pending_shares(array $args, array $assoc_args): void {
+		$network = isset($assoc_args['network']) ? sanitize_key((string)$assoc_args['network']) : 'all';
+		$limit = isset($assoc_args['limit']) ? max(1, min(100, (int)$assoc_args['limit'])) : 20;
+		$result = self::process_pending_shares($network, $limit);
+		WP_CLI::success('Processed ' . (int)$result['processed'] . ' share attempt(s); success=' . (int)$result['success'] . '; failed=' . (int)$result['failed'] . '; skipped=' . (int)$result['skipped'] . '.');
+	}
+
+	private static function process_pending_shares(string $network = 'all', int $limit = 20): array {
+		$opt = self::get_options();
+		$network_map = self::share_network_map($opt);
+		if ($network !== 'all') {
+			$network_map = isset($network_map[$network]) ? [$network => $network_map[$network]] : [];
+		}
+		if (!$network_map) {
+			return ['processed' => 0, 'success' => 0, 'failed' => 0, 'skipped' => 0];
+		}
+
+		$post_types = array_values(array_filter((array)($opt['post_type_whitelist'] ?? [])));
+		if (!$post_types) {
+			$post_types = ['post'];
+		}
+
+		$q = new WP_Query([
+			'post_type' => $post_types,
+			'post_status' => 'publish',
+			'fields' => 'ids',
+			'posts_per_page' => max(1, min(100, $limit)),
+			'orderby' => 'date',
+			'order' => 'DESC',
+			'no_found_rows' => true,
+		]);
+
+		$result = ['processed' => 0, 'success' => 0, 'failed' => 0, 'skipped' => 0];
+		$post_ids = is_array($q->posts) ? array_map('intval', $q->posts) : [];
+		foreach ($post_ids as $post_id) {
+			foreach ($network_map as $net => $cfg) {
+				if (empty($cfg['enabled'])) {
+					$result['skipped']++;
+					continue;
+				}
+				if (!empty($opt['only_once']) && empty($opt['share_on_update']) && get_post_meta($post_id, (string)$cfg['meta'], true)) {
+					$result['skipped']++;
+					continue;
+				}
+				$result['processed']++;
+				try {
+					$res = call_user_func([__CLASS__, (string)$cfg['callback']], $post_id, false);
+					if (is_wp_error($res)) {
+						self::handle_share_error($net, $post_id, $res->get_error_message(), (string)$cfg['err_key']);
+						self::maybe_notify_admin_failure($net, $post_id, $res->get_error_message());
+						$result['failed']++;
+					} else {
+						self::update_options([(string)$cfg['err_key'] => '', (string)$cfg['err_key'] . '_at' => 0]);
+						self::debug_log_event("Retry share $net success for post #$post_id.");
+						$result['success']++;
+					}
+				} catch (Throwable $e) {
+					self::handle_share_error($net, $post_id, $e->getMessage(), (string)$cfg['err_key']);
+					self::maybe_notify_admin_failure($net, $post_id, $e->getMessage());
+					$result['failed']++;
+				}
+			}
+		}
+
+		return $result;
+	}
+
+	private static function share_network_map(array $opt): array {
+		return [
+			'linkedin' => ['enabled' => !empty($opt['enabled']), 'callback' => 'share_post_to_linkedin', 'err_key' => 'last_share_error', 'meta' => self::META_SHARED_AT],
+			'x' => ['enabled' => !empty($opt['x_enabled']), 'callback' => 'share_post_to_x', 'err_key' => 'last_x_error', 'meta' => self::META_X_SHARED_AT],
+			'facebook' => ['enabled' => !empty($opt['fb_enabled']), 'callback' => 'share_post_to_facebook', 'err_key' => 'last_fb_error', 'meta' => self::META_FB_SHARED_AT],
+			'instagram' => ['enabled' => !empty($opt['ig_enabled']), 'callback' => 'share_post_to_instagram', 'err_key' => 'last_ig_error', 'meta' => self::META_IG_SHARED_AT],
+			'threads' => ['enabled' => !empty($opt['threads_enabled']), 'callback' => 'share_post_to_threads', 'err_key' => 'last_threads_error', 'meta' => self::META_THREADS_SHARED_AT],
+			'medium' => ['enabled' => !empty($opt['medium_enabled']), 'callback' => 'share_post_to_medium', 'err_key' => 'last_medium_error', 'meta' => self::META_MEDIUM_SHARED_AT],
+		];
+	}
+
 	private static function handle_share_error(string $net, int $post_id, string $msg, string $err_key): void {
 		self::update_options([
 			$err_key => $msg,
@@ -2987,6 +3310,7 @@ final class PKLIAP_Plugin {
 			'facebook' => ['label' => 'Facebook', 'error_key' => 'last_fb_error', 'time_key' => 'last_fb_error_at'],
 			'instagram' => ['label' => 'Instagram', 'error_key' => 'last_ig_error', 'time_key' => 'last_ig_error_at'],
 			'threads' => ['label' => 'Threads', 'error_key' => 'last_threads_error', 'time_key' => 'last_threads_error_at'],
+			'medium' => ['label' => 'Medium', 'error_key' => 'last_medium_error', 'time_key' => 'last_medium_error_at'],
 		];
 
 			foreach ($map as $net => $cfg) {
@@ -3027,7 +3351,7 @@ final class PKLIAP_Plugin {
 			&& ($expires_at <= 0 || time() < $expires_at);
 	}
 
-	private static function build_connection_health(array $opt, bool $linkedin_token_ok, bool $linkedin_token_not_expired, bool $has_author_urn, bool $x_connected, bool $fb_connected, bool $ig_connected, bool $threads_connected): array {
+	private static function build_connection_health(array $opt, bool $linkedin_token_ok, bool $linkedin_token_not_expired, bool $has_author_urn, bool $x_connected, bool $fb_connected, bool $ig_connected, bool $threads_connected, bool $medium_connected): array {
 		$health = [];
 
 		$linkedin_error = trim((string)($opt['last_share_error'] ?? ''));
@@ -3079,6 +3403,15 @@ final class PKLIAP_Plugin {
 			'message' => $threads_ok
 				? 'Threads User ID + Access Token renseignes.'
 				: ($threads_error !== '' ? 'Erreur recente: ' . $threads_error : 'Threads User ID ou Access Token manquant.'),
+		];
+
+		$medium_error = trim((string)($opt['last_medium_error'] ?? ''));
+		$medium_ok = $medium_connected && $medium_error === '';
+		$health['medium'] = [
+			'ok' => $medium_ok,
+			'message' => $medium_ok
+				? 'Medium User ID + Access Token renseignés.'
+				: ($medium_error !== '' ? 'Erreur récente: ' . $medium_error : 'Medium User ID ou Access Token manquant.'),
 		];
 
 		return $health;
@@ -3718,6 +4051,114 @@ final class PKLIAP_Plugin {
 		return [
 			'post_id' => $threads_post_id,
 		];
+	}
+
+	/** @return array|WP_Error */
+	private static function share_post_to_medium(int $post_id, bool $force) {
+		$post = get_post($post_id);
+		if (!$post || $post->post_status !== 'publish') {
+			return new WP_Error('pkliap_invalid_post', 'Article non publié.');
+		}
+
+		$opt = self::get_options();
+		if (empty($opt['medium_enabled']) && !$force) {
+			return ['skipped' => true];
+		}
+		if (empty($opt['medium_access_token'])) {
+			return new WP_Error('pkliap_medium_token', 'Medium: Access Token manquant.');
+		}
+
+		if (!$force && !empty($opt['only_once'])) {
+			$already = get_post_meta($post_id, self::META_MEDIUM_SHARED_AT, true);
+			if ($already && empty($opt['share_on_update'])) {
+				return ['skipped' => true];
+			}
+		}
+
+		$user_id = trim((string)($opt['medium_user_id'] ?? ''));
+		if ($user_id === '') {
+			$me = self::medium_get_me((string)$opt['medium_access_token']);
+			if (is_wp_error($me)) {
+				return $me;
+			}
+			$user_id = (string)($me['id'] ?? '');
+			if ($user_id !== '') {
+				self::update_options(['medium_user_id' => $user_id]);
+			}
+		}
+		if ($user_id === '') {
+			return new WP_Error('pkliap_medium_user', 'Medium: impossible de déterminer le User ID.');
+		}
+
+		$link = self::get_post_link($post_id, $opt);
+		$payload = [
+			'title' => wp_strip_all_tags(get_the_title($post_id)),
+			'contentFormat' => 'html',
+			'content' => self::build_medium_html_content($post_id),
+			'canonicalUrl' => $link,
+			'tags' => self::medium_post_tags($post_id),
+			'publishStatus' => in_array((string)$opt['medium_publish_status'], ['draft', 'public', 'unlisted'], true) ? (string)$opt['medium_publish_status'] : 'public',
+		];
+
+		$res = self::medium_api_post('/v1/users/' . rawurlencode($user_id) . '/posts', $payload, (string)$opt['medium_access_token']);
+		if (is_wp_error($res)) {
+			return $res;
+		}
+
+		$body = is_array($res['body'] ?? null) ? $res['body'] : [];
+		$data = is_array($body['data'] ?? null) ? $body['data'] : [];
+		$medium_post_id = (string)($data['id'] ?? '');
+		$medium_post_url = (string)($data['url'] ?? '');
+
+		update_post_meta($post_id, self::META_MEDIUM_SHARED_AT, time());
+		if ($medium_post_id !== '') {
+			update_post_meta($post_id, self::META_MEDIUM_POST_ID, $medium_post_id);
+		}
+		if ($medium_post_url !== '') {
+			update_post_meta($post_id, self::META_MEDIUM_POST_URL, $medium_post_url);
+		}
+
+		return [
+			'post_id' => $medium_post_id,
+			'url' => $medium_post_url,
+		];
+	}
+
+	private static function build_medium_html_content(int $post_id): string {
+		$post = get_post($post_id);
+		if (!$post) {
+			return '';
+		}
+		$content = apply_filters('the_content', $post->post_content);
+		$content = is_string($content) ? $content : '';
+		$content = trim($content);
+		if ($content === '') {
+			$excerpt = self::safe_excerpt($post_id, 500);
+			$content = $excerpt !== '' ? '<p>' . esc_html($excerpt) . '</p>' : '<p>' . esc_html(wp_strip_all_tags(get_the_title($post_id))) . '</p>';
+		}
+		return wp_kses_post($content);
+	}
+
+	private static function medium_post_tags(int $post_id): array {
+		$terms = get_the_terms($post_id, 'post_tag');
+		if (!is_array($terms)) {
+			return [];
+		}
+
+		$tags = [];
+		foreach ($terms as $term) {
+			if (!isset($term->name)) {
+				continue;
+			}
+			$tag = self::mb_truncate(trim(wp_strip_all_tags((string)$term->name)), 25);
+			if ($tag !== '' && !in_array($tag, $tags, true)) {
+				$tags[] = $tag;
+			}
+			if (count($tags) >= 5) {
+				break;
+			}
+		}
+		return $tags;
 	}
 
 	private static function settings_url(array $args = []): string {
@@ -4498,6 +4939,73 @@ final class PKLIAP_Plugin {
 		];
 	}
 
+	/** @return array|WP_Error */
+	private static function medium_get_me(string $access_token) {
+		$res = self::medium_api_get('/v1/me', $access_token);
+		if (is_wp_error($res)) {
+			return $res;
+		}
+		$body = is_array($res['body'] ?? null) ? $res['body'] : [];
+		$data = is_array($body['data'] ?? null) ? $body['data'] : [];
+		if (empty($data['id'])) {
+			return new WP_Error('pkliap_medium_me', 'Medium: réponse /v1/me invalide.');
+		}
+		return $data;
+	}
+
+	/** @return array|WP_Error */
+	private static function medium_api_get(string $path, string $access_token) {
+		$url = 'https://api.medium.com' . $path;
+		$res = wp_remote_get($url, [
+			'timeout' => 45,
+			'headers' => [
+				'Authorization' => 'Bearer ' . $access_token,
+				'Accept' => 'application/json',
+				'Accept-Charset' => 'utf-8',
+			],
+		]);
+		return self::medium_parse_response($res);
+	}
+
+	/** @return array|WP_Error */
+	private static function medium_api_post(string $path, array $payload, string $access_token) {
+		$url = 'https://api.medium.com' . $path;
+		$res = wp_remote_post($url, [
+			'timeout' => 45,
+			'headers' => [
+				'Authorization' => 'Bearer ' . $access_token,
+				'Content-Type' => 'application/json',
+				'Accept' => 'application/json',
+				'Accept-Charset' => 'utf-8',
+			],
+			'body' => wp_json_encode($payload),
+		]);
+		return self::medium_parse_response($res);
+	}
+
+	/** @return array|WP_Error */
+	private static function medium_parse_response($res) {
+		if (is_wp_error($res)) {
+			return $res;
+		}
+		$code = (int)wp_remote_retrieve_response_code($res);
+		$raw_body = (string)wp_remote_retrieve_body($res);
+		$body = json_decode($raw_body, true);
+		if ($code < 200 || $code >= 300) {
+			$msg = 'Erreur API Medium (HTTP ' . $code . ').';
+			if (is_array($body) && !empty($body['errors'][0]['message'])) {
+				$msg .= ' ' . (string)$body['errors'][0]['message'];
+			} elseif ($raw_body !== '') {
+				$msg .= ' ' . self::mb_truncate(wp_strip_all_tags($raw_body), 280);
+			}
+			return new WP_Error('pkliap_medium_api_error', $msg);
+		}
+		return [
+			'code' => $code,
+			'body' => is_array($body) ? $body : [],
+		];
+	}
+
 	private static function flash_key(): string {
 		return 'pkliap_flash_' . (int)get_current_user_id();
 	}
@@ -4773,4 +5281,5 @@ final class PKLIAP_Plugin {
 	}
 }
 
+register_deactivation_hook(__FILE__, ['PKLIAP_Plugin', 'deactivate']);
 PKLIAP_Plugin::init();
