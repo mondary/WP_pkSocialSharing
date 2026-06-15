@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn (image mise en avant + extrait + lien).
- * Version: 0.64
+ * Version: 0.73
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * Requires at least: 6.0
@@ -28,6 +28,8 @@ final class PKLIAP_Plugin {
 	const META_IG_SHARED_AT = '_pkliap_ig_shared_at';
 	const META_IG_MEDIA_ID = '_pkliap_ig_media_id';
 	const META_IG_PERMALINK = '_pkliap_ig_permalink';
+	const META_THREADS_SHARED_AT = '_pkliap_threads_shared_at';
+	const META_THREADS_POST_ID = '_pkliap_threads_post_id';
 	const SYNC_NAMESPACE = 'pksocialsharing/v1';
 	const SYNC_SLUG = 'pk-linkedin-autopublish';
 
@@ -52,6 +54,7 @@ final class PKLIAP_Plugin {
 		add_action('admin_post_pkliap_x_oauth_callback', [__CLASS__, 'handle_x_oauth_callback']);
 		add_action('admin_post_pkliap_x_disconnect', [__CLASS__, 'handle_x_disconnect']);
 		add_action('admin_post_pkliap_x_check', [__CLASS__, 'handle_x_check']);
+		add_action('admin_post_pkliap_clear_network_error', [__CLASS__, 'handle_clear_network_error']);
 
 		add_action('transition_post_status', [__CLASS__, 'on_transition_post_status'], 10, 3);
 		add_action('pkliap_async_share_task', [__CLASS__, 'do_async_share'], 10, 1);
@@ -326,6 +329,11 @@ final class PKLIAP_Plugin {
 			'ig_access_token' => '',
 			'last_ig_error' => '',
 			'last_ig_error_at' => 0,
+			'threads_enabled' => 0,
+			'threads_user_id' => '',
+			'threads_access_token' => '',
+			'last_threads_error' => '',
+			'last_threads_error_at' => 0,
 		];
 	}
 
@@ -477,6 +485,11 @@ final class PKLIAP_Plugin {
 		$out['ig_enabled'] = array_key_exists('ig_enabled', $value) ? (empty($value['ig_enabled']) ? 0 : 1) : (int)$current['ig_enabled'];
 		$out['ig_user_id'] = array_key_exists('ig_user_id', $value) ? sanitize_text_field((string)$value['ig_user_id']) : (string)$current['ig_user_id'];
 		$out['ig_access_token'] = array_key_exists('ig_access_token', $value) ? sanitize_text_field((string)$value['ig_access_token']) : (string)$current['ig_access_token'];
+		$ig_credentials_changed = ((string)$out['ig_user_id'] !== (string)$current['ig_user_id']) || ((string)$out['ig_access_token'] !== (string)$current['ig_access_token']);
+		$out['threads_enabled'] = array_key_exists('threads_enabled', $value) ? (empty($value['threads_enabled']) ? 0 : 1) : (int)$current['threads_enabled'];
+		$out['threads_user_id'] = array_key_exists('threads_user_id', $value) ? sanitize_text_field((string)$value['threads_user_id']) : (string)$current['threads_user_id'];
+		$out['threads_access_token'] = array_key_exists('threads_access_token', $value) ? sanitize_text_field((string)$value['threads_access_token']) : (string)$current['threads_access_token'];
+		$threads_credentials_changed = ((string)$out['threads_user_id'] !== (string)$current['threads_user_id']) || ((string)$out['threads_access_token'] !== (string)$current['threads_access_token']);
 		$out['require_image'] = array_key_exists('require_image', $value) ? (empty($value['require_image']) ? 0 : 1) : (int)$current['require_image'];
 		if (array_key_exists('media_mode', $value)) {
 			$out['media_mode'] = in_array((string)$value['media_mode'], ['opengraph', 'upload'], true) ? (string)$value['media_mode'] : $defaults['media_mode'];
@@ -515,8 +528,18 @@ final class PKLIAP_Plugin {
 			'last_fb_error_at',
 			'last_ig_error',
 			'last_ig_error_at',
+			'last_threads_error',
+			'last_threads_error_at',
 		] as $k) {
 			$out[$k] = $current[$k];
+		}
+		if ($ig_credentials_changed) {
+			$out['last_ig_error'] = '';
+			$out['last_ig_error_at'] = 0;
+		}
+		if ($threads_credentials_changed) {
+			$out['last_threads_error'] = '';
+			$out['last_threads_error_at'] = 0;
 		}
 
 		return $out;
@@ -553,6 +576,9 @@ final class PKLIAP_Plugin {
 		$link_meta_graph_explorer = 'https://developers.facebook.com/tools/explorer/';
 		$link_meta_fb_pages_docs = 'https://developers.facebook.com/docs/pages-api/posts/';
 		$link_meta_ig_publish_docs = 'https://developers.facebook.com/docs/instagram-platform/content-publishing/';
+		$link_meta_threads_docs = 'https://developers.facebook.com/docs/threads/posts/';
+		$link_meta_threads_get_started = 'https://developers.facebook.com/docs/threads/get-started/';
+		$link_meta_threads_tokens = 'https://developers.facebook.com/docs/threads/get-started/get-access-tokens-and-permissions/';
 
 		$recommended_redirect_uri = self::admin_url_action('pkliap_oauth_callback');
 		$config_redirect_uri = $opt['redirect_uri'] ?: $recommended_redirect_uri;
@@ -561,22 +587,27 @@ final class PKLIAP_Plugin {
 		$redirect_is_recommended = ($config_redirect_uri === $recommended_redirect_uri);
 		$has_author_urn = !empty($opt['author_urn']);
 		$active_network = isset($_GET['network']) ? sanitize_key((string)wp_unslash($_GET['network'])) : 'dashboard';
-		if (!in_array($active_network, ['dashboard', 'linkedin', 'x', 'facebook', 'instagram'], true)) {
+		if (!in_array($active_network, ['dashboard', 'linkedin', 'x', 'facebook', 'instagram', 'threads'], true)) {
 			$active_network = 'dashboard';
 		}
+		self::maybe_recheck_network_errors($active_network, $opt);
+		$opt = self::get_options();
+		$pending_alerts = self::collect_pending_alerts($opt);
 		$settings_base_url = menu_page_url('pk-socialsharing', false);
 		$link_tab_dashboard = remove_query_arg('network', $settings_base_url);
 		$link_tab_linkedin = add_query_arg('network', 'linkedin', $settings_base_url);
 		$link_tab_x = add_query_arg('network', 'x', $settings_base_url);
 		$link_tab_facebook = add_query_arg('network', 'facebook', $settings_base_url);
 		$link_tab_instagram = add_query_arg('network', 'instagram', $settings_base_url);
+		$link_tab_threads = add_query_arg('network', 'threads', $settings_base_url);
 		$x_callback_uri = self::admin_url_action('pkliap_x_oauth_callback');
 		$x_connected = (!empty($opt['x_access_token']) && !empty($opt['x_access_token_secret']));
 
 		$linkedin_connected = ($has_token && $has_author_urn);
 		$fb_connected = (!empty($opt['fb_page_id']) && !empty($opt['fb_access_token']));
 		$ig_connected = (!empty($opt['ig_user_id']) && !empty($opt['ig_access_token']));
-		$health = self::build_connection_health($opt, $has_token, $token_not_expired, $has_author_urn, $x_connected, $fb_connected, $ig_connected);
+		$threads_connected = (!empty($opt['threads_user_id']) && !empty($opt['threads_access_token']));
+		$health = self::build_connection_health($opt, $has_token, $token_not_expired, $has_author_urn, $x_connected, $fb_connected, $ig_connected, $threads_connected);
 
 		$tz = function_exists('wp_timezone') ? wp_timezone() : new DateTimeZone('UTC');
 		$today_start = (new DateTimeImmutable('today', $tz))->getTimestamp();
@@ -606,6 +637,7 @@ final class PKLIAP_Plugin {
 			'x'        => ['label' => 'X',         'enabled' => !empty($opt['x_enabled']),  'connected' => $x_connected,        'meta' => self::META_X_SHARED_AT,  'err_key' => 'last_x_error'],
 			'facebook' => ['label' => 'Facebook',  'enabled' => !empty($opt['fb_enabled']), 'connected' => $fb_connected,       'meta' => self::META_FB_SHARED_AT, 'err_key' => 'last_fb_error'],
 			'instagram'=> ['label' => 'Instagram', 'enabled' => !empty($opt['ig_enabled']), 'connected' => $ig_connected,       'meta' => self::META_IG_SHARED_AT, 'err_key' => 'last_ig_error'],
+			'threads'  => ['label' => 'Threads',   'enabled' => !empty($opt['threads_enabled']), 'connected' => $threads_connected, 'meta' => self::META_THREADS_SHARED_AT, 'err_key' => 'last_threads_error'],
 		];
 		$planned_by_net = [];
 		$done_by_net = [];
@@ -775,6 +807,10 @@ final class PKLIAP_Plugin {
 						Instagram
 						<span class="pks-network-pill">V1</span>
 					</a>
+					<a class="pks-network-tab <?php echo $active_network === 'threads' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_threads); ?>" role="tab" aria-selected="<?php echo $active_network === 'threads' ? 'true' : 'false'; ?>">
+						Threads
+						<span class="pks-network-pill">V1</span>
+					</a>
 				</div>
 
 				<?php if ($active_network === 'dashboard'): ?>
@@ -847,6 +883,13 @@ final class PKLIAP_Plugin {
 									<div>
 										<strong>Instagram</strong>
 										<p><?php echo esc_html($health['instagram']['message']); ?></p>
+									</div>
+								</div>
+								<div class="pks-checkrow">
+									<span class="pks-pill <?php echo $health['threads']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['threads']['ok'] ? 'OK' : 'KO'; ?></span>
+									<div>
+										<strong>Threads</strong>
+										<p><?php echo esc_html($health['threads']['message']); ?></p>
 									</div>
 								</div>
 							</div>
@@ -1094,23 +1137,46 @@ final class PKLIAP_Plugin {
 				<?php elseif ($active_network === 'facebook'): ?>
 					<div class="pks-grid">
 						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
-							<div class="pks-card-title">Facebook (Page API)</div>
+							<div class="pks-card-title">Facebook: connexion en 3 etapes</div>
 							<?php settings_fields('pkliap'); ?>
+							<p class="pks-info" style="margin:-4px 0 12px;">Meta est commun, mais Facebook publie sur une Page: il faut donc un <strong>Page ID</strong> et un <strong>Page Access Token</strong>.</p>
+							<div class="pks-checkrow" style="margin-bottom:12px;">
+								<span class="pks-pill pks-pill--warn">1</span>
+								<div>
+									<strong>Ouvre Meta et recupere la page</strong>
+									<p>Utilise le bouton ci-dessous pour ouvrir Meta Graph Explorer, puis genere un token avec les permissions Pages.</p>
+									<p style="margin:8px 0 0;">
+										<a class="button button-primary" href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">1. Ouvrir Meta Graph Explorer</a>
+									</p>
+								</div>
+							</div>
 							<table class="form-table" role="presentation">
 								<tr>
 									<th scope="row">Page ID</th>
 									<td>
 										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_page_id]" value="<?php echo esc_attr((string)$opt['fb_page_id']); ?>"/>
+										<p class="description" style="margin-top:6px;">Clique ici : <a href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">https://developers.facebook.com/tools/explorer/</a></p>
+										<p class="description" style="margin-top:6px;">Dans Meta, lance cette requete : <code>me/accounts?fields=id,name,access_token</code></p>
+										<p class="description" style="margin-top:6px;">Dans la reponse, colle ici la valeur : <code>id</code> de la Page qui publiera.</p>
 									</td>
 								</tr>
 								<tr>
 									<th scope="row">Page Access Token</th>
 									<td>
 										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_access_token]" value="<?php echo esc_attr((string)$opt['fb_access_token']); ?>"/>
-										<p class="description">Crée/récupère le token dans <a href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">Graph API Explorer</a> ou ton app Meta.</p>
+										<p class="description">Clique ici : <a href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">https://developers.facebook.com/tools/explorer/</a></p>
+										<p class="description" style="margin-top:6px;">Dans Meta, clique sur <strong>Generate Access Token</strong>, coche au minimum <code>pages_show_list</code>, <code>pages_read_engagement</code> et <code>pages_manage_posts</code>, puis lance <code>me/accounts?fields=id,name,access_token</code>.</p>
+										<p class="description" style="margin-top:6px;">Dans la reponse, colle ici la valeur : <code>access_token</code> de la Page qui publiera.</p>
 									</td>
 								</tr>
 							</table>
+							<div class="pks-checkrow" style="margin-top:12px;">
+								<span class="pks-pill pks-pill--ok">3</span>
+								<div>
+									<strong>Tester et valider</strong>
+									<p>Quand les deux champs sont remplis, enregistre puis clique sur <strong>Publier maintenant</strong> dans le bloc de test Facebook.</p>
+								</div>
+							</div>
 							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
 						</form>
 
@@ -1158,6 +1224,67 @@ final class PKLIAP_Plugin {
 							<?php endif; ?>
 							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
 						</form>
+
+						<?php if (!empty($opt['last_fb_error']) && stripos((string)$opt['last_fb_error'], '403') !== false): ?>
+						<div class="pks-card pks-card--accent-bad">
+							<div class="pks-card-title">Depannage Facebook (Erreur 403 - Permissions)</div>
+							<p class="pks-info" style="margin:-4px 0 12px;">L'erreur ci-dessous indique que le token n'a pas les permissions requises. Suis ces etapes dans l'ordre pour regenerer un token valide.</p>
+							<p class="description" style="color:#b32d2e;margin-bottom:12px;"><strong>Erreur actuelle:</strong> <?php echo esc_html((string)$opt['last_fb_error']); ?></p>
+							<div class="pks-checkrow" style="margin-bottom:12px;">
+								<span class="pks-pill pks-pill--warn">1</span>
+								<div>
+									<strong>Ouvrir le Graph API Explorer</strong>
+									<p>Clique sur le bouton ci-dessous pour ouvrir l'outil Meta dans un nouvel onglet.</p>
+									<p style="margin:8px 0 0;">
+										<a class="button button-primary" href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">Ouvrir Graph API Explorer</a>
+									</p>
+								</div>
+							</div>
+							<div class="pks-checkrow" style="margin-bottom:12px;">
+								<span class="pks-pill pks-pill--warn">2</span>
+								<div>
+									<strong>Selectionner la bonne application</strong>
+									<p>En haut a droite du Graph Explorer, verifie que le menu deroulant <em>Application</em> pointe bien sur ton app Meta (celle liee a ce site).</p>
+								</div>
+							</div>
+							<div class="pks-checkrow" style="margin-bottom:12px;">
+								<span class="pks-pill pks-pill--warn">3</span>
+								<div>
+									<strong>Generer un nouveau token avec les bonnes permissions</strong>
+									<p>Clique sur <strong>Generate Access Token</strong>. Dans la fenetre de connexion, coche <strong>exactement ces 3 permissions</strong>:</p>
+									<ul style="margin:6px 0 0 20px;list-style:disc;">
+										<li><code>pages_show_list</code> - lister les Pages</li>
+										<li><code>pages_read_engagement</code> - lire l'engagement (requis par l'API)</li>
+										<li><code>pages_manage_posts</code> - publier des posts</li>
+									</ul>
+									<p style="margin-top:6px;">Valide la connexion et accepte les permissions demandees.</p>
+								</div>
+							</div>
+							<div class="pks-checkrow" style="margin-bottom:12px;">
+								<span class="pks-pill pks-pill--warn">4</span>
+								<div>
+									<strong>Recuperer le Page Access Token</strong>
+									<p>Dans le champ de requete du Graph Explorer, lance:</p>
+									<p><code>me/accounts?fields=id,name,access_token</code></p>
+									<p style="margin-top:6px;">Dans la reponse JSON, repere ta Page et copie la valeur de <code>access_token</code> (pas le token utilisateur en haut, bien celui de la Page).</p>
+								</div>
+							</div>
+							<div class="pks-checkrow" style="margin-bottom:12px;">
+								<span class="pks-pill pks-pill--warn">5</span>
+								<div>
+									<strong>Coller le token dans les reglages</strong>
+									<p>Remonte dans la carte <em>Facebook: connexion en 3 etapes</em> ci-dessus, colle le <code>access_token</code> dans le champ <strong>Page Access Token</strong>, puis clique <strong>Enregistrer</strong>.</p>
+								</div>
+							</div>
+							<div class="pks-checkrow">
+								<span class="pks-pill pks-pill--ok">6</span>
+								<div>
+									<strong>Tester la publication</strong>
+									<p>Dans le bloc <em>Test Facebook</em> ci-dessous, clique sur <strong>Publier maintenant</strong> pour un article. Si l'erreur disparait, c'est regle.</p>
+								</div>
+							</div>
+						</div>
+						<?php endif; ?>
 
 						<div class="pks-card pks-card--wide">
 							<div class="pks-card-title">Test Facebook</div>
@@ -1217,15 +1344,32 @@ final class PKLIAP_Plugin {
 				<?php elseif ($active_network === 'instagram'): ?>
 					<div class="pks-grid">
 						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
-							<div class="pks-card-title">Instagram (Content Publishing)</div>
+							<div class="pks-card-title">Instagram: connexion en 3 étapes</div>
 							<?php settings_fields('pkliap'); ?>
+							<p class="pks-info" style="margin:-4px 0 12px;">Instagram publie sur un compte professionnel lie a une Page Facebook: l'identifiant attendu ici est <strong>instagram_business_account.id</strong>.</p>
+							<div class="pks-checkrow" style="margin-bottom:12px;">
+								<span class="pks-pill pks-pill--warn">1</span>
+								<div>
+									<strong>Ouvre Meta et récupère un token</strong>
+									<p>Utilise le bouton ci-dessous pour ouvrir l’outil Meta, puis génère un token avec les permissions Instagram et Pages.</p>
+									<p style="margin:8px 0 0;">
+										<a class="button button-primary" href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">1. Ouvrir Meta Graph Explorer</a>
+									</p>
+								</div>
+							</div>
 							<table class="form-table" role="presentation">
 								<tr>
 									<th scope="row">IG User ID</th>
 									<td>
 										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[ig_user_id]" value="<?php echo esc_attr((string)$opt['ig_user_id']); ?>"/>
 										<p class="description" style="margin-top:6px;">
-											Récupérer l’ID via le Graph API Explorer avec le token Meta, en lisant la Page liée : <code>/&lt;page-id&gt;?fields=instagram_business_account{id,username}</code>. La valeur attendue ici est <code>instagram_business_account.id</code>.
+											Clique ici : <a href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">https://developers.facebook.com/tools/explorer/</a>
+										</p>
+										<p class="description" style="margin-top:6px;">
+											Dans Meta, lance cette requête : <code>me/accounts?fields=id,name,instagram_business_account{id,username}</code>
+										</p>
+										<p class="description" style="margin-top:6px;">
+											Dans la réponse, colle ici la valeur : <code>instagram_business_account.id</code>
 										</p>
 									</td>
 								</tr>
@@ -1233,7 +1377,10 @@ final class PKLIAP_Plugin {
 									<th scope="row">Access Token</th>
 									<td>
 										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[ig_access_token]" value="<?php echo esc_attr((string)$opt['ig_access_token']); ?>"/>
-										<p class="description">Token Meta avec permissions Instagram publishing. Le plus simple est de réutiliser le token Meta généré pour Facebook si ce token contient aussi les permissions Instagram.</p>
+										<p class="description">Clique ici : <a href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">https://developers.facebook.com/tools/explorer/</a></p>
+										<p class="description" style="margin-top:6px;">
+											Dans Meta, clique sur <strong>Generate Access Token</strong>, coche les permissions ci-dessous, puis colle ici le token généré.
+										</p>
 										<p class="description" style="margin-top:6px;">
 											Permissions minimales à demander : <code>instagram_basic</code>, <code>instagram_content_publish</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>. Selon la config Meta, <code>pages_manage_metadata</code> peut aussi être nécessaire pour remonter correctement le compte Instagram lié à la Page.
 										</p>
@@ -1241,16 +1388,10 @@ final class PKLIAP_Plugin {
 								</tr>
 							</table>
 							<div class="pks-checkrow" style="margin-top:12px;">
-								<span class="pks-pill pks-pill--ok">SETUP</span>
+								<span class="pks-pill pks-pill--ok">3</span>
 								<div>
-									<strong>Pas-à-pas Instagram</strong>
-									<p>1. Passer le compte Instagram en compte professionnel (Business ou Creator).</p>
-									<p>2. Lier ce compte Instagram à une Page Facebook que tu gères.</p>
-									<p>3. Dans Meta Developers, activer le cas d’usage <strong>Gérer les messages et les contenus sur Instagram</strong>.</p>
-									<p>4. Dans Graph API Explorer, générer un <strong>User Access Token</strong> avec les permissions Instagram + Pages.</p>
-									<p>5. Vérifier la Page liée avec <code>/me/accounts?fields=id,name,instagram_business_account{id,username}</code>.</p>
-									<p>6. Si <code>instagram_business_account</code> apparaît, copier son <code>id</code> dans <strong>IG User ID</strong>.</p>
-									<p>7. Réutiliser le token Meta dans <strong>Access Token</strong>, enregistrer, puis tester avec <strong>Publier maintenant</strong>.</p>
+									<strong>Tester et valider</strong>
+									<p>Quand les deux champs sont remplis, enregistre puis clique sur <strong>Publier maintenant</strong> dans le bloc de test Instagram.</p>
 								</div>
 							</div>
 							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
@@ -1263,6 +1404,9 @@ final class PKLIAP_Plugin {
 							<p class="pks-info" style="margin:8px 0 0;">Nécessite une image mise en avant publique (featured image).</p>
 							<?php if (!empty($opt['last_ig_error'])): ?>
 								<p class="description" style="color:#b32d2e;">Dernière erreur Instagram: <?php echo esc_html((string)$opt['last_ig_error']); ?></p>
+								<p style="margin:8px 0 0;">
+									<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_clear_network_error') . '&network=instagram', 'pkliap_clear_network_error_instagram')); ?>">Effacer cette ancienne erreur</a>
+								</p>
 							<?php endif; ?>
 							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
 						</form>
@@ -1315,6 +1459,116 @@ final class PKLIAP_Plugin {
 											</td>
 											<td><?php echo $ig_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
 											<td><a class="button button-secondary" href="<?php echo esc_url($ig_action_url); ?>">Publier maintenant</a></td>
+										</tr>
+									<?php endforeach; ?>
+								<?php endif; ?>
+								</tbody>
+							</table>
+						</div>
+					</div>
+				<?php elseif ($active_network === 'threads'): ?>
+					<div class="pks-grid">
+						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
+							<div class="pks-card-title">Threads: connexion en 3 etapes</div>
+							<?php settings_fields('pkliap'); ?>
+							<p class="pks-info" style="margin:-4px 0 12px;">Threads publie sur un profil Threads: il faut un <strong>Threads User ID</strong> et un token Threads avec les permissions <code>threads_basic</code> + <code>threads_content_publish</code>.</p>
+							<div class="pks-checkrow" style="margin-bottom:12px;">
+								<span class="pks-pill pks-pill--warn">1</span>
+								<div>
+									<strong>Ouvre Meta Threads</strong>
+									<p>Utilise le bouton ci-dessous pour ouvrir le guide de depart Threads, puis genere un token utilisateur Threads avec la permission de publication.</p>
+									<p style="margin:8px 0 0;">
+										<a class="button button-primary" href="<?php echo esc_url($link_meta_threads_tokens); ?>" target="_blank" rel="noopener">1. Ouvrir le guide token Threads</a>
+									</p>
+								</div>
+							</div>
+							<table class="form-table" role="presentation">
+								<tr>
+									<th scope="row">Threads User ID</th>
+									<td>
+										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[threads_user_id]" value="<?php echo esc_attr((string)$opt['threads_user_id']); ?>"/>
+										<p class="description" style="margin-top:6px;">Clique ici : <a href="<?php echo esc_url($link_meta_threads_get_started); ?>" target="_blank" rel="noopener"><?php echo esc_html($link_meta_threads_get_started); ?></a></p>
+										<p class="description" style="margin-top:6px;">Une fois le token obtenu, demande ton profil Threads avec <code>GET /me?fields=id,username</code>.</p>
+										<p class="description" style="margin-top:6px;">Colle ici la valeur : <code>id</code>.</p>
+									</td>
+								</tr>
+								<tr>
+									<th scope="row">Threads Access Token</th>
+									<td>
+										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[threads_access_token]" value="<?php echo esc_attr((string)$opt['threads_access_token']); ?>"/>
+										<p class="description">Clique ici : <a href="<?php echo esc_url($link_meta_threads_tokens); ?>" target="_blank" rel="noopener"><?php echo esc_html($link_meta_threads_tokens); ?></a></p>
+										<p class="description" style="margin-top:6px;">Dans Meta, recupere un Threads user access token avec au minimum <code>threads_basic</code> et <code>threads_content_publish</code>, puis colle ici le token.</p>
+									</td>
+								</tr>
+							</table>
+							<div class="pks-checkrow" style="margin-top:12px;">
+								<span class="pks-pill pks-pill--ok">3</span>
+								<div>
+									<strong>Tester et valider</strong>
+									<p>Quand les deux champs sont remplis, enregistre puis clique sur <strong>Publier maintenant</strong> dans le bloc de test Threads.</p>
+								</div>
+							</div>
+							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+						</form>
+
+						<form method="post" action="options.php" class="pks-card pks-card--accent-ok">
+							<div class="pks-card-title">Publication Threads</div>
+							<?php settings_fields('pkliap'); ?>
+							<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[threads_enabled]" value="1" <?php checked(1, (int)$opt['threads_enabled']); ?>/> Publier automatiquement sur Threads</label>
+							<p class="pks-info" style="margin:8px 0 0;">Publication texte via la Threads API officielle. Limite de texte Threads: 500 caracteres.</p>
+							<?php if (!empty($opt['last_threads_error'])): ?>
+								<p class="description" style="color:#b32d2e;">Derniere erreur Threads: <?php echo esc_html((string)$opt['last_threads_error']); ?></p>
+							<?php endif; ?>
+							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+						</form>
+
+						<div class="pks-card pks-card--wide">
+							<div class="pks-card-title">Test Threads</div>
+							<p class="pks-info" style="margin:0 0 12px;">Docs: <a href="<?php echo esc_url($link_meta_threads_docs); ?>" target="_blank" rel="noopener">Threads API Posts</a></p>
+							<?php
+							$posts = get_posts([
+								'post_type' => $opt['post_type_whitelist'],
+								'post_status' => 'publish',
+								'numberposts' => 20,
+								'orderby' => 'date',
+								'order' => 'DESC',
+							]);
+							?>
+							<table class="widefat striped" style="width:100%;">
+								<thead>
+									<tr>
+										<th style="width:60px;">ID</th>
+										<th style="width:64px;">Image</th>
+										<th>Article</th>
+										<th style="width:220px;">Statut Threads</th>
+										<th style="width:180px;">Action</th>
+									</tr>
+								</thead>
+								<tbody>
+								<?php if (!$posts): ?>
+									<tr><td colspan="5">Aucun article publie trouve.</td></tr>
+								<?php else: ?>
+									<?php foreach ($posts as $p): ?>
+										<?php
+										$threads_shared_at = (int)get_post_meta($p->ID, self::META_THREADS_SHARED_AT, true);
+										$threads_post_id = (string)get_post_meta($p->ID, self::META_THREADS_POST_ID, true);
+										$threads_status = $threads_shared_at ? ('Partage le ' . esc_html(wp_date('Y-m-d H:i', $threads_shared_at)) . ($threads_post_id ? '<br/><code style="font-size:11px;">' . esc_html($threads_post_id) . '</code>' : '')) : 'Jamais partage';
+										$threads_action_url = wp_nonce_url(self::admin_url_action('pkliap_test_post') . '&post_id=' . (int)$p->ID . '&network=threads', 'pkliap_test_post_' . (int)$p->ID);
+										$edit_url = get_edit_post_link($p->ID, '');
+										$thumb_html = get_the_post_thumbnail($p->ID, [48, 48], ['style' => 'width:48px;height:48px;object-fit:cover;border-radius:4px;']);
+										?>
+										<tr>
+											<td><?php echo (int)$p->ID; ?></td>
+											<td><?php echo $thumb_html ?: '<span style="opacity:.6;">-</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											<td>
+												<strong><?php echo esc_html($p->post_title ?: '(Sans titre)'); ?></strong>
+												<div class="row-actions">
+													<span><a href="<?php echo esc_url(get_permalink($p->ID)); ?>" target="_blank" rel="noopener">Voir</a> | </span>
+													<span><a href="<?php echo esc_url($edit_url ?: '#'); ?>">Modifier</a></span>
+												</div>
+											</td>
+											<td><?php echo $threads_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											<td><a class="button button-secondary" href="<?php echo esc_url($threads_action_url); ?>">Publier maintenant</a></td>
 										</tr>
 									<?php endforeach; ?>
 								<?php endif; ?>
@@ -2083,6 +2337,23 @@ final class PKLIAP_Plugin {
 				$messages[] = 'Instagram: OK';
 			}
 		}
+		if (!empty($opt['threads_user_id']) && !empty($opt['threads_access_token'])) {
+			$threads_check = self::threads_api_get('/me', ['fields' => 'id,username'], (string)$opt['threads_access_token']);
+			if (is_wp_error($threads_check)) {
+				self::update_options([
+					'last_threads_error' => $threads_check->get_error_message(),
+					'last_threads_error_at' => time(),
+				]);
+				$messages[] = 'Threads: ' . $threads_check->get_error_message();
+				$meta_ok = false;
+			} else {
+				self::update_options([
+					'last_threads_error' => '',
+					'last_threads_error_at' => 0,
+				]);
+				$messages[] = 'Threads: OK';
+			}
+		}
 
 		if (!$messages) {
 			$messages[] = 'Aucune connexion active à vérifier.';
@@ -2155,6 +2426,12 @@ final class PKLIAP_Plugin {
 			$messages[] = is_wp_error($ig_me) ? ('Instagram: ' . $ig_me->get_error_message()) : 'Instagram: auth OK, dry run OK';
 		} else {
 			$messages[] = 'Instagram: configuration incomplète';
+		}
+		if (!empty($opt['threads_access_token'])) {
+			$threads_me = self::threads_api_get('/me', ['fields' => 'id,username'], (string)$opt['threads_access_token']);
+			$messages[] = is_wp_error($threads_me) ? ('Threads: ' . $threads_me->get_error_message()) : 'Threads: auth OK, dry run OK';
+		} else {
+			$messages[] = 'Threads: configuration incomplete';
 		}
 
 		self::set_flash('notice', implode(' | ', $messages));
@@ -2326,13 +2603,42 @@ final class PKLIAP_Plugin {
 		exit;
 	}
 
+	public static function handle_clear_network_error(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		$network = isset($_GET['network']) ? sanitize_key((string)wp_unslash($_GET['network'])) : '';
+		check_admin_referer('pkliap_clear_network_error_' . $network);
+
+		$map = [
+			'facebook' => ['last_fb_error', 'last_fb_error_at'],
+			'instagram' => ['last_ig_error', 'last_ig_error_at'],
+			'threads' => ['last_threads_error', 'last_threads_error_at'],
+			'x' => ['last_x_error', 'last_x_error_at'],
+			'linkedin' => ['last_share_error', 'last_share_error_at'],
+		];
+		if (!isset($map[$network])) {
+			self::set_flash('error', 'Réseau invalide.');
+			wp_safe_redirect(self::settings_url());
+			exit;
+		}
+
+		self::update_options([
+			$map[$network][0] => '',
+			$map[$network][1] => 0,
+		]);
+		self::set_flash('notice', 'Ancienne erreur effacée.');
+		wp_safe_redirect(self::settings_url(['network' => $network]));
+		exit;
+	}
+
 	public static function handle_test_post(): void {
 		if (!current_user_can('manage_options')) {
 			wp_die('Forbidden');
 		}
 		$post_id = isset($_REQUEST['post_id']) ? (int)$_REQUEST['post_id'] : 0;
 		$network = isset($_REQUEST['network']) ? sanitize_key((string)wp_unslash($_REQUEST['network'])) : 'linkedin';
-		if (!in_array($network, ['linkedin', 'x', 'facebook', 'instagram'], true)) {
+		if (!in_array($network, ['linkedin', 'x', 'facebook', 'instagram', 'threads'], true)) {
 			$network = 'linkedin';
 		}
 		if (!$post_id) {
@@ -2349,6 +2655,8 @@ final class PKLIAP_Plugin {
 				$res = self::share_post_to_facebook($post_id, true);
 			} elseif ($network === 'instagram') {
 				$res = self::share_post_to_instagram($post_id, true);
+			} elseif ($network === 'threads') {
+				$res = self::share_post_to_threads($post_id, true);
 			} else {
 				$res = self::share_post_to_linkedin($post_id, true);
 			}
@@ -2360,6 +2668,8 @@ final class PKLIAP_Plugin {
 				self::update_options(['last_fb_error' => $msg, 'last_fb_error_at' => time()]);
 			} elseif ($network === 'instagram') {
 				self::update_options(['last_ig_error' => $msg, 'last_ig_error_at' => time()]);
+			} elseif ($network === 'threads') {
+				self::update_options(['last_threads_error' => $msg, 'last_threads_error_at' => time()]);
 			} else {
 				self::update_options(['last_share_error' => $msg, 'last_share_error_at' => time()]);
 			}
@@ -2379,6 +2689,9 @@ final class PKLIAP_Plugin {
 			} elseif ($network === 'instagram') {
 				self::update_options(['last_ig_error' => $res->get_error_message(), 'last_ig_error_at' => time()]);
 				self::maybe_notify_admin_failure($network, $post_id, $res->get_error_message());
+			} elseif ($network === 'threads') {
+				self::update_options(['last_threads_error' => $res->get_error_message(), 'last_threads_error_at' => time()]);
+				self::maybe_notify_admin_failure($network, $post_id, $res->get_error_message());
 			} else {
 				self::update_options(['last_share_error' => $res->get_error_message(), 'last_share_error_at' => time()]);
 				self::maybe_notify_admin_failure($network, $post_id, $res->get_error_message());
@@ -2395,6 +2708,8 @@ final class PKLIAP_Plugin {
 			self::update_options(['last_fb_error' => '', 'last_fb_error_at' => 0]);
 		} elseif ($network === 'instagram') {
 			self::update_options(['last_ig_error' => '', 'last_ig_error_at' => 0]);
+		} elseif ($network === 'threads') {
+			self::update_options(['last_threads_error' => '', 'last_threads_error_at' => 0]);
 		} else {
 			self::update_options(['last_share_error' => '', 'last_share_error_at' => 0]);
 		}
@@ -2405,6 +2720,8 @@ final class PKLIAP_Plugin {
 			$notice = 'Post Facebook envoyé.';
 		} elseif ($network === 'instagram') {
 			$notice = 'Post Instagram envoyé.';
+		} elseif ($network === 'threads') {
+			$notice = 'Post Threads envoyé.';
 		} else {
 			$notice = 'Post LinkedIn envoyé.';
 		}
@@ -2424,7 +2741,7 @@ final class PKLIAP_Plugin {
 		}
 
 		$opt = self::get_options();
-		if (empty($opt['enabled']) && empty($opt['x_enabled']) && empty($opt['fb_enabled']) && empty($opt['ig_enabled'])) {
+		if (empty($opt['enabled']) && empty($opt['x_enabled']) && empty($opt['fb_enabled']) && empty($opt['ig_enabled']) && empty($opt['threads_enabled'])) {
 			return;
 		}
 
@@ -2441,7 +2758,8 @@ final class PKLIAP_Plugin {
 		$x_already = !empty(get_post_meta($post->ID, self::META_X_SHARED_AT, true));
 		$fb_already = !empty(get_post_meta($post->ID, self::META_FB_SHARED_AT, true));
 		$ig_already = !empty(get_post_meta($post->ID, self::META_IG_SHARED_AT, true));
-		if (!empty($opt['only_once']) && $linkedin_already && $x_already && $fb_already && $ig_already && empty($opt['share_on_update'])) {
+		$threads_already = !empty(get_post_meta($post->ID, self::META_THREADS_SHARED_AT, true));
+		if (!empty($opt['only_once']) && $linkedin_already && $x_already && $fb_already && $ig_already && $threads_already && empty($opt['share_on_update'])) {
 			return;
 		}
 
@@ -2493,6 +2811,7 @@ final class PKLIAP_Plugin {
 			'x'         => ['enabled' => !empty($opt['x_enabled']),  'callback' => 'share_post_to_x',         'err_key' => 'last_x_error'],
 			'facebook'  => ['enabled' => !empty($opt['fb_enabled']), 'callback' => 'share_post_to_facebook',  'err_key' => 'last_fb_error'],
 			'instagram' => ['enabled' => !empty($opt['ig_enabled']), 'callback' => 'share_post_to_instagram', 'err_key' => 'last_ig_error'],
+			'threads'   => ['enabled' => !empty($opt['threads_enabled']), 'callback' => 'share_post_to_threads', 'err_key' => 'last_threads_error'],
 		];
 
 		foreach ($networks as $net => $cfg) {
@@ -2504,6 +2823,7 @@ final class PKLIAP_Plugin {
 					'x' => self::META_X_SHARED_AT,
 					'facebook' => self::META_FB_SHARED_AT,
 					'instagram' => self::META_IG_SHARED_AT,
+					'threads' => self::META_THREADS_SHARED_AT,
 				];
 				if (!empty($opt['only_once']) && empty($opt['share_on_update']) && !empty($meta_by_net[$net]) && get_post_meta($post_id, $meta_by_net[$net], true)) {
 					self::debug_log_event("Auto share $net skipped for post #$post_id: already shared.");
@@ -2541,6 +2861,7 @@ final class PKLIAP_Plugin {
 			'x' => ['label' => 'X', 'error_key' => 'last_x_error', 'time_key' => 'last_x_error_at'],
 			'facebook' => ['label' => 'Facebook', 'error_key' => 'last_fb_error', 'time_key' => 'last_fb_error_at'],
 			'instagram' => ['label' => 'Instagram', 'error_key' => 'last_ig_error', 'time_key' => 'last_ig_error_at'],
+			'threads' => ['label' => 'Threads', 'error_key' => 'last_threads_error', 'time_key' => 'last_threads_error_at'],
 		];
 
 			foreach ($map as $net => $cfg) {
@@ -2581,7 +2902,7 @@ final class PKLIAP_Plugin {
 			&& ($expires_at <= 0 || time() < $expires_at);
 	}
 
-	private static function build_connection_health(array $opt, bool $linkedin_token_ok, bool $linkedin_token_not_expired, bool $has_author_urn, bool $x_connected, bool $fb_connected, bool $ig_connected): array {
+	private static function build_connection_health(array $opt, bool $linkedin_token_ok, bool $linkedin_token_not_expired, bool $has_author_urn, bool $x_connected, bool $fb_connected, bool $ig_connected, bool $threads_connected): array {
 		$health = [];
 
 		$linkedin_error = trim((string)($opt['last_share_error'] ?? ''));
@@ -2624,6 +2945,15 @@ final class PKLIAP_Plugin {
 			'message' => $ig_ok
 				? 'User ID + Access Token renseignés.'
 				: ($ig_error !== '' ? 'Erreur récente: ' . $ig_error : 'User ID ou Access Token manquant.'),
+		];
+
+		$threads_error = trim((string)($opt['last_threads_error'] ?? ''));
+		$threads_ok = $threads_connected && $threads_error === '';
+		$health['threads'] = [
+			'ok' => $threads_ok,
+			'message' => $threads_ok
+				? 'Threads User ID + Access Token renseignes.'
+				: ($threads_error !== '' ? 'Erreur recente: ' . $threads_error : 'Threads User ID ou Access Token manquant.'),
 		];
 
 		return $health;
@@ -3005,7 +3335,10 @@ final class PKLIAP_Plugin {
 		if (!$thumb_id) {
 			return new WP_Error('pkliap_ig_image_required', 'Instagram: image mise en avant obligatoire.');
 		}
-		$image_url = wp_get_attachment_image_url($thumb_id, 'full');
+		$image_url = self::get_instagram_compatible_image_url($thumb_id);
+		if (is_wp_error($image_url)) {
+			return $image_url;
+		}
 		if (!$image_url) {
 			return new WP_Error('pkliap_ig_image_required', 'Instagram: image publique introuvable.');
 		}
@@ -3025,9 +3358,20 @@ final class PKLIAP_Plugin {
 			return new WP_Error('pkliap_ig_media_create', 'Instagram: creation_id manquant.');
 		}
 
+		$ready = self::wait_for_instagram_container($creation_id, (string)$opt['ig_access_token']);
+		if (is_wp_error($ready)) {
+			return $ready;
+		}
+
 		$publish = self::meta_graph_post('/' . rawurlencode((string)$opt['ig_user_id']) . '/media_publish', [
 			'creation_id' => $creation_id,
 		], (string)$opt['ig_access_token']);
+		if (is_wp_error($publish) && stripos($publish->get_error_message(), 'Media ID is not available') !== false) {
+			sleep(3);
+			$publish = self::meta_graph_post('/' . rawurlencode((string)$opt['ig_user_id']) . '/media_publish', [
+				'creation_id' => $creation_id,
+			], (string)$opt['ig_access_token']);
+		}
 		if (is_wp_error($publish)) {
 			return $publish;
 		}
@@ -3054,6 +3398,172 @@ final class PKLIAP_Plugin {
 		return [
 			'media_id' => $ig_media_id,
 			'permalink' => $permalink,
+		];
+	}
+
+	/** @return true|WP_Error */
+	private static function wait_for_instagram_container(string $creation_id, string $access_token) {
+		$last_status = '';
+		for ($attempt = 0; $attempt < 6; $attempt++) {
+			if ($attempt > 0) {
+				sleep(2);
+			}
+
+			$status = self::meta_graph_get('/' . rawurlencode($creation_id), [
+				'fields' => 'status_code,status',
+			], $access_token);
+			if (is_wp_error($status)) {
+				return $status;
+			}
+
+			$body = is_array($status['body'] ?? null) ? $status['body'] : [];
+			$status_code = strtoupper((string)($body['status_code'] ?? ''));
+			$last_status = $status_code !== '' ? $status_code : (string)($body['status'] ?? '');
+			if ($status_code === 'FINISHED' || $status_code === 'PUBLISHED') {
+				return true;
+			}
+			if ($status_code === 'ERROR' || $status_code === 'EXPIRED') {
+				return new WP_Error('pkliap_ig_container_not_ready', 'Instagram: container media en erreur (' . $last_status . ').');
+			}
+		}
+
+		return new WP_Error('pkliap_ig_container_not_ready', 'Instagram: media pas encore prêt côté Meta après attente. Dernier statut: ' . ($last_status ?: 'inconnu') . '.');
+	}
+
+	/** @return string|WP_Error */
+	private static function get_instagram_compatible_image_url(int $attachment_id) {
+		$original_url = wp_get_attachment_image_url($attachment_id, 'full');
+		$file = get_attached_file($attachment_id);
+		if (!$file || !is_readable($file)) {
+			return $original_url ?: new WP_Error('pkliap_ig_image_required', 'Instagram: image source introuvable.');
+		}
+
+		$size = @getimagesize($file);
+		if (!is_array($size) || empty($size[0]) || empty($size[1])) {
+			return $original_url ?: new WP_Error('pkliap_ig_image_required', 'Instagram: dimensions image introuvables.');
+		}
+
+		$width = (int)$size[0];
+		$height = (int)$size[1];
+		$ratio = $width / max(1, $height);
+		$min_ratio = 0.8;  // 4:5.
+		$max_ratio = 1.91; // 1.91:1.
+
+		if ($ratio >= $min_ratio && $ratio <= $max_ratio && $width <= 1440) {
+			return $original_url ?: new WP_Error('pkliap_ig_image_required', 'Instagram: image publique introuvable.');
+		}
+
+		$src_x = 0;
+		$src_y = 0;
+		$src_w = $width;
+		$src_h = $height;
+		if ($ratio < $min_ratio) {
+			$src_h = (int)floor($width / $min_ratio);
+			$src_y = max(0, (int)floor(($height - $src_h) / 2));
+		} elseif ($ratio > $max_ratio) {
+			$src_w = (int)floor($height * $max_ratio);
+			$src_x = max(0, (int)floor(($width - $src_w) / 2));
+		}
+
+		$cropped_ratio = $src_w / max(1, $src_h);
+		$dest_w = min(1440, $src_w);
+		$dest_h = max(1, (int)round($dest_w / $cropped_ratio));
+
+		$uploads = wp_upload_dir();
+		if (!empty($uploads['error']) || empty($uploads['basedir']) || empty($uploads['baseurl'])) {
+			return new WP_Error('pkliap_ig_image_resize', 'Instagram: dossier uploads indisponible.');
+		}
+
+		$out_dir = trailingslashit((string)$uploads['basedir']) . 'pk-socialsharing-instagram';
+		if (!wp_mkdir_p($out_dir)) {
+			return new WP_Error('pkliap_ig_image_resize', 'Instagram: impossible de créer le dossier image compatible.');
+		}
+
+		$stamp = is_readable($file) ? (string)filemtime($file) : '0';
+		$hash = substr(md5($file . '|' . $stamp . '|' . $src_x . '|' . $src_y . '|' . $src_w . '|' . $src_h . '|' . $dest_w . '|' . $dest_h), 0, 12);
+		$out_file = trailingslashit($out_dir) . 'ig-' . $attachment_id . '-' . $hash . '.jpg';
+		$out_url = trailingslashit((string)$uploads['baseurl']) . 'pk-socialsharing-instagram/' . basename($out_file);
+		if (is_readable($out_file)) {
+			return $out_url;
+		}
+
+		if (!function_exists('wp_get_image_editor')) {
+			require_once ABSPATH . 'wp-admin/includes/image.php';
+		}
+		$editor = wp_get_image_editor($file);
+		if (is_wp_error($editor)) {
+			return $editor;
+		}
+		if (method_exists($editor, 'set_quality')) {
+			$editor->set_quality(90);
+		}
+
+		$crop = $editor->crop($src_x, $src_y, $src_w, $src_h, $dest_w, $dest_h, false);
+		if (is_wp_error($crop)) {
+			return $crop;
+		}
+		$saved = $editor->save($out_file, 'image/jpeg');
+		if (is_wp_error($saved)) {
+			return $saved;
+		}
+
+		return $out_url;
+	}
+
+	/** @return array|WP_Error */
+	private static function share_post_to_threads(int $post_id, bool $force) {
+		$post = get_post($post_id);
+		if (!$post || $post->post_status !== 'publish') {
+			return new WP_Error('pkliap_invalid_post', 'Article non publie.');
+		}
+
+		$opt = self::get_options();
+		if (empty($opt['threads_enabled']) && !$force) {
+			return ['skipped' => true];
+		}
+		if (empty($opt['threads_user_id']) || empty($opt['threads_access_token'])) {
+			return new WP_Error('pkliap_threads_config', 'Threads: User ID ou Access Token manquant.');
+		}
+
+		if (!$force && !empty($opt['only_once'])) {
+			$already = get_post_meta($post_id, self::META_THREADS_SHARED_AT, true);
+			if ($already && empty($opt['share_on_update'])) {
+				return ['skipped' => true];
+			}
+		}
+
+		$link = self::get_post_link($post_id, $opt);
+		$text = self::build_threads_text($post_id, $opt, $link);
+		$create = self::threads_api_post('/' . rawurlencode((string)$opt['threads_user_id']) . '/threads', [
+			'media_type' => 'TEXT',
+			'text' => $text,
+		], (string)$opt['threads_access_token']);
+		if (is_wp_error($create)) {
+			return $create;
+		}
+
+		$creation_id = (string)($create['body']['id'] ?? '');
+		if ($creation_id === '') {
+			return new WP_Error('pkliap_threads_create', 'Threads: creation_id manquant.');
+		}
+
+		$publish = self::threads_api_post('/' . rawurlencode((string)$opt['threads_user_id']) . '/threads_publish', [
+			'creation_id' => $creation_id,
+		], (string)$opt['threads_access_token']);
+		if (is_wp_error($publish)) {
+			return $publish;
+		}
+
+		$threads_post_id = (string)($publish['body']['id'] ?? '');
+		if ($threads_post_id === '') {
+			return new WP_Error('pkliap_threads_publish', 'Threads: post id manquant.');
+		}
+
+		update_post_meta($post_id, self::META_THREADS_SHARED_AT, time());
+		update_post_meta($post_id, self::META_THREADS_POST_ID, $threads_post_id);
+
+		return [
+			'post_id' => $threads_post_id,
 		];
 	}
 
@@ -3092,7 +3602,7 @@ final class PKLIAP_Plugin {
 	}
 
 	private static function build_linkedin_text(int $post_id, array $opt, string $link): string {
-		return self::build_network_text($post_id, $opt, $link, '', 2800);
+		return self::build_network_text($post_id, $opt, $link, '', 620, 150);
 	}
 
 	private static function build_x_text(int $post_id, array $opt, string $link): string {
@@ -3110,12 +3620,16 @@ final class PKLIAP_Plugin {
 	}
 
 	private static function build_instagram_caption(int $post_id, array $opt, string $link): string {
-		return self::mb_truncate(self::build_linkedin_text($post_id, $opt, $link), 2200);
+		return self::build_network_text($post_id, $opt, $link, '', 2200);
 	}
 
-	private static function build_network_text(int $post_id, array $opt, string $link, string $prefix_key, int $limit): string {
+	private static function build_threads_text(int $post_id, array $opt, string $link): string {
+		return self::build_network_text($post_id, $opt, $link, '', 500);
+	}
+
+	private static function build_network_text(int $post_id, array $opt, string $link, string $prefix_key, int $limit, int $excerpt_limit = 260): string {
 		$title = wp_strip_all_tags(get_the_title($post_id));
-		$excerpt = self::safe_excerpt($post_id, 260);
+		$excerpt = self::safe_excerpt($post_id, $excerpt_limit);
 		$template = self::network_opt_string($opt, $prefix_key . 'text_template', 'text_template');
 
 		if (trim($template) !== '') {
@@ -3131,7 +3645,8 @@ final class PKLIAP_Plugin {
 			];
 			$text = strtr($normalized_template, $tokens);
 			$text = preg_replace("/[ \t]+\n/", "\n", $text) ?? $text;
-			return self::mb_truncate(trim($text), $limit);
+			$text = self::normalize_link_paragraph(trim($text), $link);
+			return self::mb_truncate_preserving_link($text, $limit, $link);
 		}
 
 		$parts = [];
@@ -3160,7 +3675,43 @@ final class PKLIAP_Plugin {
 		}
 
 		$text = trim(implode("\n\n", array_filter($parts, static fn($p) => (string)$p !== '')));
-		return self::mb_truncate($text, $limit);
+		$text = self::normalize_link_paragraph($text, $link);
+		return self::mb_truncate_preserving_link($text, $limit, $link);
+	}
+
+	private static function normalize_link_paragraph(string $text, string $link): string {
+		if ($text === '' || $link === '' || strpos($text, $link) === false) {
+			return $text;
+		}
+
+		$pattern = '/[ \t]*(?:\R[ \t]*)*' . preg_quote($link, '/') . '/u';
+		$text = preg_replace($pattern, "\n\n" . $link, $text, 1) ?? $text;
+		$text = preg_replace("/\n{3,}/", "\n\n", $text) ?? $text;
+		return trim($text);
+	}
+
+	private static function mb_truncate_preserving_link(string $text, int $limit, string $link): string {
+		if ($limit <= 0 || self::mb_length($text) <= $limit) {
+			return self::mb_truncate($text, $limit);
+		}
+		if ($link === '' || strpos($text, $link) === false) {
+			return self::mb_truncate($text, $limit);
+		}
+
+		$pos = strpos($text, $link);
+		if ($pos === false) {
+			return self::mb_truncate($text, $limit);
+		}
+
+		$before = trim(substr($text, 0, $pos));
+		$after = trim(substr($text, $pos));
+		$separator_len = 2;
+		$available_before = $limit - self::mb_length($after) - $separator_len;
+		if ($available_before < 20) {
+			return self::mb_truncate($text, $limit);
+		}
+
+		return trim(self::mb_truncate($before, $available_before)) . "\n\n" . $after;
 	}
 
 	private static function network_opt_string(array $opt, string $network_key, string $fallback_key): string {
@@ -3236,6 +3787,13 @@ final class PKLIAP_Plugin {
 			return $s;
 		}
 		return rtrim(substr($s, 0, max(0, $max - 1))) . '…';
+	}
+
+	private static function mb_length(string $s): int {
+		if (function_exists('mb_strlen')) {
+			return (int)mb_strlen($s);
+		}
+		return strlen($s);
 	}
 
 	/** @return array|WP_Error */
@@ -3724,6 +4282,62 @@ final class PKLIAP_Plugin {
 				$msg .= ' ' . (string)$body['error']['message'];
 			}
 			return new WP_Error('pkliap_meta_api_error', $msg);
+		}
+		return [
+			'code' => $code,
+			'body' => is_array($body) ? $body : [],
+		];
+	}
+
+	/** @return array|WP_Error */
+	private static function threads_api_post(string $path, array $payload, string $access_token) {
+		$url = 'https://graph.threads.net/v1.0' . $path;
+		$payload['access_token'] = $access_token;
+
+		$res = wp_remote_post($url, [
+			'timeout' => 45,
+			'body' => $payload,
+		]);
+		if (is_wp_error($res)) {
+			return $res;
+		}
+		$code = (int)wp_remote_retrieve_response_code($res);
+		$raw_body = (string)wp_remote_retrieve_body($res);
+		$body = json_decode($raw_body, true);
+		if ($code < 200 || $code >= 300) {
+			$msg = 'Erreur API Threads (HTTP ' . $code . ').';
+			if (is_array($body) && !empty($body['error']['message'])) {
+				$msg .= ' ' . (string)$body['error']['message'];
+			}
+			return new WP_Error('pkliap_threads_api_error', $msg);
+		}
+		return [
+			'code' => $code,
+			'body' => is_array($body) ? $body : [],
+		];
+	}
+
+	/** @return array|WP_Error */
+	private static function threads_api_get(string $path, array $query, string $access_token) {
+		$url = 'https://graph.threads.net/v1.0' . $path;
+		$query['access_token'] = $access_token;
+		$url = add_query_arg($query, $url);
+
+		$res = wp_remote_get($url, [
+			'timeout' => 45,
+		]);
+		if (is_wp_error($res)) {
+			return $res;
+		}
+		$code = (int)wp_remote_retrieve_response_code($res);
+		$raw_body = (string)wp_remote_retrieve_body($res);
+		$body = json_decode($raw_body, true);
+		if ($code < 200 || $code >= 300) {
+			$msg = 'Erreur API Threads (HTTP ' . $code . ').';
+			if (is_array($body) && !empty($body['error']['message'])) {
+				$msg .= ' ' . (string)$body['error']['message'];
+			}
+			return new WP_Error('pkliap_threads_api_error', $msg);
 		}
 		return [
 			'code' => $code,
