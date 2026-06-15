@@ -3156,13 +3156,17 @@ final class PKLIAP_Plugin {
 
 	private static function maybe_notify_admin_failure(string $net, int $post_id, string $msg): void {
 		$opt = self::get_options();
-		$notify_enabled = true;
-		if (!$notify_enabled) {
-			return;
-		}
 
-		$hash = md5($net . '|' . $msg);
-		if (!empty($opt['last_admin_alert_hash']) && $opt['last_admin_alert_hash'] === $hash) {
+		$post = get_post($post_id);
+		$post_title = $post ? wp_specialchars_decode((string)$post->post_title, ENT_QUOTES) : "(post #$post_id)";
+		$post_link = $post ? get_permalink($post_id) : '';
+
+		$hash = md5($net . '|' . $post_id);
+		$recent = is_array($opt['last_admin_alert_hash'] ?? null) ? $opt['last_admin_alert_hash'] : [];
+		if (!is_array($recent)) {
+			$recent = $recent ? [$recent] : [];
+		}
+		if (in_array($hash, $recent, true)) {
 			return;
 		}
 
@@ -3171,19 +3175,43 @@ final class PKLIAP_Plugin {
 			return;
 		}
 
-		$subject = sprintf('[%s] erreur %s', wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES), strtoupper($net));
-		$body = sprintf(
-			"Une erreur de partage a été détectée.\n\nRéseau : %s\nArticle ID : %d\nMessage : %s\nHeure : %s\n\nLinkedIn 401 = token expiré, reconnecte le compte.\nX 402 = crédits X insuffisants, il faut recharger le compte ou le forfait.\n",
-			strtoupper($net),
-			$post_id,
-			$msg,
-			wp_date('Y-m-d H:i:s')
-		);
+		$site_name = wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES);
+		$subject = sprintf('[%s] Partage %s echoue : %s', $site_name, strtoupper($net), $post_title);
+
+		$guidance = '';
+		if ($net === 'linkedin' && stripos($msg, '401') !== false) {
+			$guidance = "Action: reconnecte ton compte LinkedIn dans les reglages du plugin.";
+		} elseif ($net === 'x' && stripos($msg, '402') !== false) {
+			$guidance = "Action: les credits X sont epuises. Recharge le compte ou utilise 'Publier via navigateur'.";
+		} elseif (($net === 'facebook' || $net === 'instagram') && stripos($msg, '403') !== false) {
+			$guidance = "Action: permissions manquantes. Regenere le Page Access Token dans le Graph Explorer avec pages_show_list, pages_read_engagement et pages_manage_posts.";
+		} elseif (($net === 'facebook' || $net === 'instagram') && stripos($msg, 'expired') !== false) {
+			$guidance = "Action: le token Meta a expire. Regenere un nouveau Page Access Token dans le Graph Explorer (type Page).";
+		} elseif ($net === 'threads' && stripos($msg, 'expired') !== false) {
+			$guidance = "Action: le token Threads a expire. Regenere-le dans le Graph Explorer.";
+		}
+
+		$body = "Une erreur de partage automatique a ete detectee.\n\n";
+		$body .= "Reseau : " . strtoupper($net) . "\n";
+		$body .= "Article : " . $post_title . "\n";
+		if ($post_link) {
+			$body .= "Lien : " . $post_link . "\n";
+		}
+		$body .= "Heure : " . wp_date('Y-m-d H:i:s') . "\n\n";
+		$body .= "Erreur : " . $msg . "\n";
+		if ($guidance) {
+			$body .= "\n" . $guidance . "\n";
+		}
+		$body .= "\nReglages : " . admin_url('admin.php?page=pk-socialsharing') . "\n";
 
 		if (wp_mail($to, $subject, $body)) {
+			$recent[] = $hash;
+			if (count($recent) > 50) {
+				$recent = array_slice($recent, -50);
+			}
 			self::update_options([
 				'last_admin_alert_at' => time(),
-				'last_admin_alert_hash' => $hash,
+				'last_admin_alert_hash' => $recent,
 			]);
 		}
 	}
