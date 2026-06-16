@@ -1,10 +1,10 @@
-=== PK LinkedIn Auto Publish ===
+=== WP PK SocialSharing ===
 Contributors: pk
 Tags: linkedin, facebook, instagram, threads, medium, x, twitter, social, autopublish
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram, Threads et Medium lors de la publication.
@@ -23,9 +23,9 @@ Fonctionnalites :
 * Instagram : publication de posts image via l'API Instagram Graph
 * Threads : publication via l'API Threads
 * Medium : publication via integration token, contenu HTML et canonical URL WordPress
-* Guide de depannage integre dans les reglages (erreurs 403, tokens expires)
+* Connexion Meta OAuth pour obtenir un token longue duree et remplir Facebook/Instagram proprement
 * Journal de debug interne visible dans l'admin
-* Page de reglages dans Reglages > WP PK SocialSharing
+* Page de reglages WP PK SocialSharing
 
 == Installation ==
 
@@ -39,10 +39,20 @@ Fonctionnalites :
 * La publication X via l'API necessite des credits sur le compte developpeur X. Si X renvoie HTTP 402, utilisez "Publier via navigateur" ou rechargez les credits.
 * Si WP-Cron est desactive, ajoutez un cron serveur avec `wp pksocialsharing retry --network=x --limit=20`.
 * Facebook et Instagram necessitent un Page Access Token Meta avec les permissions `pages_show_list`, `pages_read_engagement` et `pages_manage_posts`.
-* Les tokens Meta expirent generalement apres 60 jours. Un guide de regeneration est affiche automatiquement en cas d'erreur.
+* Les tokens Meta generes depuis Graph Explorer expirent vite. Utilisez la connexion Meta OAuth du plugin pour obtenir un token longue duree.
 * Medium necessite un integration token disponible dans les reglages Medium du compte.
 
 == Changelog ==
+
+= 1.1.1 =
+* Renommage du plugin et de la documentation en WP PK SocialSharing
+* Ajout d'un README francais et d'un README anglais alignes
+* Clarification du guide Meta: App ID et App Secret viennent du dashboard Meta, pas de Graph Explorer
+
+= 1.1.0 =
+* Ajout de la connexion Meta OAuth pour obtenir un token longue duree
+* Detection automatique de la Page Facebook, du Page Access Token et du compte Instagram lie
+* Dashboard et colonne articles enrichis avec statuts et liens de partage
 
 = 0.91 =
 * Ajout d'un flux Meta pour convertir un token Graph Explorer court en token longue duree

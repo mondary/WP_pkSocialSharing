@@ -3,9 +3,9 @@ if (function_exists('opcache_invalidate')) {
 	opcache_invalidate(__FILE__, true);
 }
 /**
- * Plugin Name: PK LinkedIn Auto Publish
+ * Plugin Name: WP PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * Requires at least: 6.0
@@ -213,7 +213,7 @@ final class PKLIAP_Plugin {
 		?>
 		<div class="pks-card pks-card--accent-warn pks-card--wide">
 			<div class="pks-card-title">Meta: connexion Facebook & Instagram</div>
-			<p class="pks-info" style="margin:-4px 0 12px;">Connecte ton compte Meta en un clic. Le plugin récupère automatiquement un token longue durée (~60 jours), ta Page Facebook et ton compte Instagram.</p>
+			<p class="pks-info" style="margin:-4px 0 12px;">Connecte ton compte Meta sans recoller un token toutes les heures. Le plugin utilise ton app Meta pour récupérer un token longue durée, puis détecte automatiquement ta Page Facebook et ton compte Instagram.</p>
 
 			<form method="post" action="options.php">
 				<?php settings_fields('pkliap'); ?>
@@ -221,10 +221,15 @@ final class PKLIAP_Plugin {
 				<div class="pks-checkrow" style="margin-bottom:14px;">
 					<span class="pks-pill pks-pill--warn">1</span>
 					<div>
-						<strong>App ID et App Secret</strong>
+						<strong>Récupérer App ID et App Secret</strong>
 						<p class="description" style="margin:4px 0 8px;">
-							Trouve-les dans ton app Meta → <em>Settings &gt; Basic</em>.
-							<a href="<?php echo esc_url($link_meta_developer); ?>" target="_blank" rel="noopener">developers.facebook.com/apps</a>
+							Clique ici : <a href="<?php echo esc_url($link_meta_developer); ?>" target="_blank" rel="noopener">https://developers.facebook.com/apps/</a>
+						</p>
+						<p class="description" style="margin:4px 0 8px;">
+							Dans Meta, ouvre ton app <strong>WPSocialSharing</strong>, puis va dans <strong>Paramètres &gt; Général</strong>. Copie ici <strong>ID de l’app</strong> et <strong>Clé secrète de l’app</strong>.
+						</p>
+						<p class="description" style="margin:4px 0 8px;">
+							Important : ces deux valeurs ne sont pas renvoyées par Graph Explorer. Graph Explorer sert à tester les permissions, pas à récupérer l’App Secret.
 						</p>
 						<table class="form-table" role="presentation" style="margin:0;">
 							<tr>
@@ -265,6 +270,7 @@ final class PKLIAP_Plugin {
 				<div>
 					<strong>Connecter Facebook & Instagram</strong>
 					<p class="description" style="margin:4px 0 8px;">Une fois App ID, App Secret et URI de redirection configurés, clique ci-dessous. Facebook te demandera d'accepter les permissions et de choisir ta Page.</p>
+					<p class="description" style="margin:4px 0 8px;">Le plugin lancera ensuite automatiquement l’équivalent de cette requête : <code>me/accounts?fields=id,name,access_token,instagram_business_account{id,username}</code>. Il remplira Page ID, Page Access Token et IG User ID si Meta les renvoie.</p>
 					<form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
 						<input type="hidden" name="action" value="pkliap_meta_connect"/>
 						<?php wp_nonce_field('pkliap_meta_connect'); ?>
