@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 0.74
+ * Version: 0.78
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * Requires at least: 6.0
@@ -525,15 +525,6 @@ final class PKLIAP_Plugin {
 		$out['ig_enabled'] = array_key_exists('ig_enabled', $value) ? (empty($value['ig_enabled']) ? 0 : 1) : (int)$current['ig_enabled'];
 		$out['ig_user_id'] = array_key_exists('ig_user_id', $value) ? sanitize_text_field((string)$value['ig_user_id']) : (string)$current['ig_user_id'];
 		$out['ig_access_token'] = array_key_exists('ig_access_token', $value) ? sanitize_text_field((string)$value['ig_access_token']) : (string)$current['ig_access_token'];
-
-		// Facebook et Instagram partagent le meme token Meta: synchroniser automatiquement.
-		$fb_token_changed = (array_key_exists('fb_access_token', $value) && (string)$value['fb_access_token'] !== (string)$current['fb_access_token']);
-		$ig_token_changed = (array_key_exists('ig_access_token', $value) && (string)$value['ig_access_token'] !== (string)$current['ig_access_token']);
-		if ($fb_token_changed && !$ig_token_changed) {
-			$out['ig_access_token'] = $out['fb_access_token'];
-		} elseif ($ig_token_changed && !$fb_token_changed) {
-			$out['fb_access_token'] = $out['ig_access_token'];
-		}
 
 		$ig_credentials_changed = ((string)$out['ig_user_id'] !== (string)$current['ig_user_id']) || ((string)$out['ig_access_token'] !== (string)$current['ig_access_token']);
 		$out['threads_enabled'] = array_key_exists('threads_enabled', $value) ? (empty($value['threads_enabled']) ? 0 : 1) : (int)$current['threads_enabled'];
@@ -1215,19 +1206,9 @@ final class PKLIAP_Plugin {
 				<?php elseif ($active_network === 'facebook'): ?>
 					<div class="pks-grid">
 						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
-							<div class="pks-card-title">Facebook: connexion en 3 etapes</div>
+							<div class="pks-card-title">Facebook: connexion</div>
 							<?php settings_fields('pkliap'); ?>
-							<p class="pks-info" style="margin:-4px 0 12px;">Meta est commun, mais Facebook publie sur une Page: il faut donc un <strong>Page ID</strong> et un <strong>Page Access Token</strong>.</p>
-							<div class="pks-checkrow" style="margin-bottom:12px;">
-								<span class="pks-pill pks-pill--warn">1</span>
-								<div>
-									<strong>Ouvre Meta et recupere la page</strong>
-									<p>Utilise le bouton ci-dessous pour ouvrir Meta Graph Explorer, puis genere un token avec les permissions Pages.</p>
-									<p style="margin:8px 0 0;">
-										<a class="button button-primary" href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">1. Ouvrir Meta Graph Explorer</a>
-									</p>
-								</div>
-							</div>
+							<p class="pks-info" style="margin:-4px 0 12px;">Facebook publie sur une Page: il faut un <strong>Page ID</strong> et un <strong>Page Access Token</strong>.</p>
 							<table class="form-table" role="presentation">
 								<tr>
 									<th scope="row">Page ID</th>
@@ -1242,9 +1223,10 @@ final class PKLIAP_Plugin {
 									<th scope="row">Page Access Token</th>
 									<td>
 										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_access_token]" value="<?php echo esc_attr((string)$opt['fb_access_token']); ?>"/>
-										<p class="description">Clique ici : <a href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">https://developers.facebook.com/tools/explorer/</a></p>
-										<p class="description" style="margin-top:6px;">Dans Meta, clique sur <strong>Generate Access Token</strong>, coche au minimum <code>pages_show_list</code>, <code>pages_read_engagement</code> et <code>pages_manage_posts</code>, puis lance <code>me/accounts?fields=id,name,access_token</code>.</p>
+										<p class="description" style="margin-top:6px;">Clique ici : <a href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">https://developers.facebook.com/tools/explorer/</a></p>
+										<p class="description" style="margin-top:6px;">Dans Meta, clique sur <strong>Generate Access Token</strong>, coche les permissions ci-dessous, puis lance <code>me/accounts?fields=id,name,access_token</code>.</p>
 										<p class="description" style="margin-top:6px;">Dans la reponse, colle ici la valeur : <code>access_token</code> de la Page qui publiera.</p>
+										<p class="description" style="margin-top:6px;">Permissions minimales a demander : <code>pages_show_list</code>, <code>pages_read_engagement</code>, <code>pages_manage_posts</code>.</p>
 									</td>
 								</tr>
 							</table>
@@ -1302,82 +1284,6 @@ final class PKLIAP_Plugin {
 							<?php endif; ?>
 							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
 						</form>
-
-						<?php
-						$fb_err = (string)$opt['last_fb_error'];
-						$fb_err_is_permission = (stripos($fb_err, '403') !== false || stripos($fb_err, 'permission') !== false);
-						$fb_err_is_expired = (stripos($fb_err, 'expired') !== false || stripos($fb_err, 'Session has expired') !== false);
-						if (!empty($fb_err) && ($fb_err_is_permission || $fb_err_is_expired)): ?>
-						<div class="pks-card pks-card--accent-bad">
-							<div class="pks-card-title">Depannage Facebook<?php echo $fb_err_is_permission ? ' (Erreur 403 - Permissions)' : ' (Token expire)'; ?></div>
-							<p class="pks-info" style="margin:-4px 0 12px;">
-								<?php if ($fb_err_is_permission): ?>
-									L'erreur indique que le token n'a pas les permissions requises. Il faut regenerer un token avec les bonnes permissions.
-								<?php else: ?>
-									Le Page Access Token a expire. Il faut en generer un nouveau. Les tokens de Page expirent generalement apres 60 jours.
-								<?php endif; ?>
-								Suis ces etapes dans l'ordre.
-							</p>
-							<p class="description" style="color:#b32d2e;margin-bottom:12px;"><strong>Erreur actuelle:</strong> <?php echo esc_html($fb_err); ?></p>
-							<div class="pks-checkrow" style="margin-bottom:12px;">
-								<span class="pks-pill pks-pill--warn">1</span>
-								<div>
-									<strong>Ouvrir le Graph API Explorer</strong>
-									<p>Clique sur le bouton ci-dessous pour ouvrir l'outil Meta dans un nouvel onglet.</p>
-									<p style="margin:8px 0 0;">
-										<a class="button button-primary" href="<?php echo esc_url($link_meta_graph_explorer); ?>" target="_blank" rel="noopener">Ouvrir Graph API Explorer</a>
-									</p>
-								</div>
-							</div>
-							<div class="pks-checkrow" style="margin-bottom:12px;">
-								<span class="pks-pill pks-pill--warn">2</span>
-								<div>
-									<strong>Selectionner la bonne application et le type Page</strong>
-									<p>En haut a droite du Graph Explorer, verifie que le menu deroulant <em>Application</em> pointe bien sur ton app Meta (celle liee a ce site).</p>
-									<p style="margin-top:6px;"><strong>Important:</strong> dans le menu <em>Utilisateur ou Page</em>, choisis <strong>Page</strong> (pas "Token utilisateur"). Si tu ne vois pas ta Page, clique sur <em>Generer un jeton d'acces</em> et autorise l'acces a ta Page.</p>
-								</div>
-							</div>
-							<div class="pks-checkrow" style="margin-bottom:12px;">
-								<span class="pks-pill pks-pill--warn">3</span>
-								<div>
-									<strong>Generer un nouveau token avec les bonnes permissions</strong>
-									<p>Clique sur <strong>Generate Access Token</strong>. Dans la fenetre de connexion, coche <strong>exactement ces 3 permissions</strong>:</p>
-									<ul style="margin:6px 0 0 20px;list-style:disc;">
-										<li><code>pages_show_list</code> - lister les Pages</li>
-										<li><code>pages_read_engagement</code> - lire l'engagement (requis par l'API)</li>
-										<li><code>pages_manage_posts</code> - publier des posts</li>
-									</ul>
-									<p style="margin-top:6px;">Valide la connexion et accepte les permissions demandees.</p>
-								</div>
-							</div>
-							<div class="pks-checkrow" style="margin-bottom:12px;">
-								<span class="pks-pill pks-pill--warn">4</span>
-								<div>
-									<strong>Recuperer le Page Access Token</strong>
-									<p>Si tu as bien choisi <strong>Page</strong> a l'etape 2, le token affiche en haut est deja le bon (Page Access Token). Copie-le directement.</p>
-									<p style="margin-top:8px;">Sinon, dans le champ de requete, lance:</p>
-									<p><code>me/accounts?fields=id,name,access_token</code></p>
-									<p style="margin-top:6px;">Dans la reponse JSON, repere ta Page et copie la valeur de <code>access_token</code>.</p>
-									<p style="margin-top:6px;color:#b32d2e;"><strong>Attention:</strong> ne copie PAS le "Token utilisateur" affiche en haut si le menu indique encore "Token utilisateur". Il faut absolument un token de <strong>Page</strong>.</p>
-								</div>
-							</div>
-							<div class="pks-checkrow" style="margin-bottom:12px;">
-								<span class="pks-pill pks-pill--warn">5</span>
-								<div>
-									<strong>Coller le token dans les reglages</strong>
-									<p>Remonte dans la carte <em>Facebook: connexion en 3 etapes</em> ci-dessus, colle le <code>access_token</code> dans le champ <strong>Page Access Token</strong>, puis clique <strong>Enregistrer</strong>.</p>
-									<p style="margin-top:6px;"><strong>Instagram:</strong> si tu utilises aussi Instagram, colle ce meme token dans l'onglet Instagram &gt; <strong>Access Token</strong>. C'est le meme token Meta pour les deux reseaux.</p>
-								</div>
-							</div>
-							<div class="pks-checkrow">
-								<span class="pks-pill pks-pill--ok">6</span>
-								<div>
-									<strong>Tester la publication</strong>
-									<p>Dans le bloc <em>Test Facebook</em> ci-dessous, clique sur <strong>Publier maintenant</strong> pour un article. Si l'erreur disparait, c'est regle.</p>
-								</div>
-							</div>
-						</div>
-						<?php endif; ?>
 
 						<div class="pks-card pks-card--wide">
 							<div class="pks-card-title">Test Facebook</div>
@@ -1439,7 +1345,7 @@ final class PKLIAP_Plugin {
 						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
 							<div class="pks-card-title">Instagram: connexion en 3 étapes</div>
 							<?php settings_fields('pkliap'); ?>
-							<p class="pks-info" style="margin:-4px 0 12px;">Instagram publie sur un compte professionnel lie a une Page Facebook: l'identifiant attendu ici est <strong>instagram_business_account.id</strong>.</p>
+							<p class="pks-info" style="margin:-4px 0 12px;">Instagram publie sur un compte professionnel lié à une Page Facebook: l'identifiant attendu ici est <strong>instagram_business_account.id</strong>. Le token est stocké séparément de Facebook.</p>
 							<div class="pks-checkrow" style="margin-bottom:12px;">
 								<span class="pks-pill pks-pill--warn">1</span>
 								<div>
@@ -3774,17 +3680,39 @@ final class PKLIAP_Plugin {
 
 		$link = self::get_post_link($post_id, $opt);
 		$text = self::build_facebook_text($post_id, $opt, $link);
-		$payload = ['message' => $text];
-		if (!empty($opt['include_url'])) {
-			$payload['link'] = $link;
+
+		$thumb_id = get_post_thumbnail_id($post_id);
+		$image_url = $thumb_id ? wp_get_attachment_image_url($thumb_id, 'full') : '';
+		if ($image_url) {
+			$res = self::meta_graph_post('/' . rawurlencode((string)$opt['fb_page_id']) . '/photos', [
+				'url' => $image_url,
+				'caption' => $text,
+			], (string)$opt['fb_access_token']);
+		} else {
+			$payload = ['message' => $text];
+			if (self::network_opt_bool($opt, 'fb_include_url', 'include_url')) {
+				$payload['link'] = $link;
+			}
+
+			$res = self::meta_graph_post('/' . rawurlencode((string)$opt['fb_page_id']) . '/feed', $payload, (string)$opt['fb_access_token']);
 		}
 
-		$res = self::meta_graph_post('/' . rawurlencode((string)$opt['fb_page_id']) . '/feed', $payload, (string)$opt['fb_access_token']);
 		if (is_wp_error($res)) {
 			return $res;
 		}
 
-		$fb_post_id = (string)($res['body']['id'] ?? '');
+		$fb_post_id = (string)($res['body']['post_id'] ?? $res['body']['id'] ?? '');
+		if ($fb_post_id === '' && $image_url) {
+			$fallback = self::meta_graph_post('/' . rawurlencode((string)$opt['fb_page_id']) . '/feed', [
+				'message' => $text,
+				'link' => $link,
+			], (string)$opt['fb_access_token']);
+			if (is_wp_error($fallback)) {
+				return $fallback;
+			}
+			$fb_post_id = (string)($fallback['body']['id'] ?? '');
+		}
+
 		update_post_meta($post_id, self::META_FB_SHARED_AT, time());
 		if ($fb_post_id !== '') {
 			update_post_meta($post_id, self::META_FB_POST_ID, $fb_post_id);
@@ -3821,12 +3749,13 @@ final class PKLIAP_Plugin {
 		if (!$thumb_id) {
 			return new WP_Error('pkliap_ig_image_required', 'Instagram: image mise en avant obligatoire.');
 		}
+
 		$image_url = self::get_instagram_compatible_image_url($thumb_id);
 		if (is_wp_error($image_url)) {
 			return $image_url;
 		}
 		if (!$image_url) {
-			return new WP_Error('pkliap_ig_image_required', 'Instagram: image publique introuvable.');
+			return new WP_Error('pkliap_ig_image_required', 'Instagram: URL image introuvable.');
 		}
 
 		$link = self::get_post_link($post_id, $opt);
@@ -3886,7 +3815,6 @@ final class PKLIAP_Plugin {
 			'permalink' => $permalink,
 		];
 	}
-
 	/** @return true|WP_Error */
 	private static function wait_for_instagram_container(string $creation_id, string $access_token) {
 		$last_status = '';

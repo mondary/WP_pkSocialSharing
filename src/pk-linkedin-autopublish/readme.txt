@@ -4,7 +4,7 @@ Tags: linkedin, facebook, instagram, threads, medium, x, twitter, social, autopu
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.74
+Stable tag: 0.78
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram, Threads et Medium lors de la publication.
@@ -43,6 +43,23 @@ Fonctionnalites :
 * Medium necessite un integration token disponible dans les reglages Medium du compte.
 
 == Changelog ==
+
+= 0.78 =
+* Facebook publie maintenant l'image mise en avant via l'endpoint photos quand elle existe
+* Fallback conserve le partage lien classique quand aucun visuel n'est disponible
+
+= 0.77 =
+* Reglages Facebook alignes sur Instagram avec lien Graph Explorer et requete a lancer dans les champs
+* Suppression du bloc Depannage Facebook redondant
+
+= 0.76 =
+* Interface Facebook simplifiee pour supprimer les doublons d'aide
+* Message d'erreur Meta reduit a l'action utile: regenerer le Page Access Token
+
+= 0.75 =
+* Suppression de la synchronisation automatique du token Facebook/Instagram
+* Tokens Meta désormais stockés et modifiés séparément pour éviter les écrasements croisés
+* Version plugin montee a 0.75
 
 = 0.74 =
 * Ajout du partage Medium via API officielle (`/v1/me` et `/v1/users/{id}/posts`)
