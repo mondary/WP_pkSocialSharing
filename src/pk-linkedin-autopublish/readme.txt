@@ -4,7 +4,7 @@ Tags: linkedin, facebook, instagram, threads, medium, x, twitter, social, autopu
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.78
+Stable tag: 0.80
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram, Threads et Medium lors de la publication.
@@ -43,6 +43,14 @@ Fonctionnalites :
 * Medium necessite un integration token disponible dans les reglages Medium du compte.
 
 == Changelog ==
+
+= 0.80 =
+* Colonne Partages deplacee a droite apres Date
+* Remplacement des initiales par des icones reseaux grises ou colorees selon le statut
+* Ajout du permalink Threads pour les nouveaux partages quand l'API le renvoie
+
+= 0.79 =
+* Ajout d'une colonne Partages dans la liste des articles pour voir les statuts et liens publies
 
 = 0.78 =
 * Facebook publie maintenant l'image mise en avant via l'endpoint photos quand elle existe

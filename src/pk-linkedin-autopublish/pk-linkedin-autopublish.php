@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 0.78
+ * Version: 0.80
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * Requires at least: 6.0
@@ -33,6 +33,7 @@ final class PKLIAP_Plugin {
 	const META_IG_PERMALINK = '_pkliap_ig_permalink';
 	const META_THREADS_SHARED_AT = '_pkliap_threads_shared_at';
 	const META_THREADS_POST_ID = '_pkliap_threads_post_id';
+	const META_THREADS_PERMALINK = '_pkliap_threads_permalink';
 	const META_MEDIUM_SHARED_AT = '_pkliap_medium_shared_at';
 	const META_MEDIUM_POST_ID = '_pkliap_medium_post_id';
 	const META_MEDIUM_POST_URL = '_pkliap_medium_post_url';
@@ -43,9 +44,11 @@ final class PKLIAP_Plugin {
 	public static function init(): void {
 		add_action('admin_menu', [__CLASS__, 'admin_menu']);
 		add_action('admin_init', [__CLASS__, 'register_settings']);
+		add_action('admin_init', [__CLASS__, 'register_admin_columns']);
 		add_action('admin_notices', [__CLASS__, 'admin_notices']);
 		add_action('admin_bar_menu', [__CLASS__, 'admin_bar_menu'], 100);
 		add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_plugins_icon']);
+		add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_admin_list_styles']);
 		add_action('rest_api_init', [__CLASS__, 'register_rest_routes']);
 		add_filter('cron_schedules', [__CLASS__, 'cron_schedules']);
 		add_action('init', [__CLASS__, 'maybe_schedule_retry_cron']);
@@ -122,6 +125,96 @@ final class PKLIAP_Plugin {
 			. $row_sel . ' .plugin-icon svg{opacity:0 !important;}';
 
 		wp_add_inline_style($handle, $css);
+	}
+
+	public static function enqueue_admin_list_styles(string $hook): void {
+		if ($hook !== 'edit.php') {
+			return;
+		}
+
+		$screen = function_exists('get_current_screen') ? get_current_screen() : null;
+		$post_type = $screen && !empty($screen->post_type) ? (string)$screen->post_type : 'post';
+		$opt = self::get_options();
+		if (!in_array($post_type, (array)($opt['post_type_whitelist'] ?? ['post']), true)) {
+			return;
+		}
+
+		$handle = 'pkliap-admin-list';
+		wp_register_style($handle, false, [], self::get_plugin_version());
+		wp_enqueue_style($handle);
+		wp_add_inline_style($handle, '
+			.column-pkliap_share_status{width:178px}
+			.pkliap-share-list{display:flex;gap:6px;align-items:center;justify-content:flex-start;max-width:178px}
+			.pkliap-share-icon{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border:1px solid #dcdcde;border-radius:50%;background:#f6f7f7;color:#8c8f94;text-decoration:none;box-sizing:border-box}
+			.pkliap-share-icon svg{width:13px;height:13px;display:block;fill:currentColor}
+			.pkliap-share-icon.is-shared{color:var(--pkliap-share-color);border-color:color-mix(in srgb,var(--pkliap-share-color) 42%,#dcdcde);background:color-mix(in srgb,var(--pkliap-share-color) 10%,#fff)}
+			.pkliap-share-icon.is-missing{filter:grayscale(1);opacity:.52}
+			a.pkliap-share-icon:hover{transform:translateY(-1px);box-shadow:0 1px 3px rgba(0,0,0,.14)}
+			.pkliap-share-icon code{display:none}
+		');
+	}
+
+	public static function register_admin_columns(): void {
+		$opt = self::get_options();
+		$post_types = array_values(array_filter((array)($opt['post_type_whitelist'] ?? ['post'])));
+		if (!$post_types) {
+			$post_types = ['post'];
+		}
+
+		foreach ($post_types as $post_type) {
+			$post_type = sanitize_key((string)$post_type);
+			if ($post_type === '') {
+				continue;
+			}
+			add_filter("manage_{$post_type}_posts_columns", [__CLASS__, 'add_sharing_status_column']);
+			add_action("manage_{$post_type}_posts_custom_column", [__CLASS__, 'render_sharing_status_column'], 10, 2);
+		}
+	}
+
+	public static function add_sharing_status_column(array $columns): array {
+		$new_columns = [];
+		foreach ($columns as $key => $label) {
+			if ($key === 'pkliap_share_status') {
+				continue;
+			}
+			$new_columns[$key] = $label;
+			if ($key === 'date') {
+				$new_columns['pkliap_share_status'] = 'Partages';
+			}
+		}
+		if (!isset($new_columns['pkliap_share_status'])) {
+			$new_columns['pkliap_share_status'] = 'Partages';
+		}
+		return $new_columns;
+	}
+
+	public static function render_sharing_status_column(string $column, int $post_id): void {
+		if ($column !== 'pkliap_share_status') {
+			return;
+		}
+
+		$items = self::build_post_share_status_items($post_id);
+		echo '<div class="pkliap-share-list">';
+		foreach ($items as $item) {
+			$label = (string)$item['label'];
+			$key = (string)$item['key'];
+			$url = (string)$item['url'];
+			$id = (string)$item['id'];
+			$color = (string)$item['color'];
+			$shared_at = (int)$item['shared_at'];
+			$class = $shared_at ? 'pkliap-share-icon is-shared' : 'pkliap-share-icon is-missing';
+			$style = $shared_at ? ('--pkliap-share-color:' . $color . ';') : '';
+			$title = $shared_at ? ($label . ' partagé le ' . wp_date('Y-m-d H:i', $shared_at)) : ($label . ' non partagé');
+			$icon = self::social_icon_svg($key);
+			if ($url !== '') {
+				echo '<a class="' . esc_attr($class) . '" style="' . esc_attr($style) . '" href="' . esc_url($url) . '" target="_blank" rel="noopener" title="' . esc_attr($title) . '" aria-label="' . esc_attr($title) . '">' . $icon . '</a>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			} elseif ($shared_at && $id !== '') {
+				echo '<span class="' . esc_attr($class) . '" style="' . esc_attr($style) . '" title="' . esc_attr($title . ' - ID: ' . $id) . '" aria-label="' . esc_attr($title) . '">' . $icon . '<code>' . esc_html($id) . '</code></span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			} else {
+				echo '<span class="' . esc_attr($class) . '" title="' . esc_attr($title) . '" aria-label="' . esc_attr($title) . '">' . $icon . '</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			}
+		}
+		echo '</div>';
 	}
 
 	public static function register_rest_routes(): void {
@@ -3973,11 +4066,23 @@ final class PKLIAP_Plugin {
 			return new WP_Error('pkliap_threads_publish', 'Threads: post id manquant.');
 		}
 
+		$permalink = '';
+		$get = self::threads_api_get('/' . rawurlencode($threads_post_id), [
+			'fields' => 'permalink',
+		], (string)$opt['threads_access_token']);
+		if (!is_wp_error($get)) {
+			$permalink = (string)($get['body']['permalink'] ?? '');
+		}
+
 		update_post_meta($post_id, self::META_THREADS_SHARED_AT, time());
 		update_post_meta($post_id, self::META_THREADS_POST_ID, $threads_post_id);
+		if ($permalink !== '') {
+			update_post_meta($post_id, self::META_THREADS_PERMALINK, $permalink);
+		}
 
 		return [
 			'post_id' => $threads_post_id,
+			'permalink' => $permalink,
 		];
 	}
 
@@ -4103,6 +4208,78 @@ final class PKLIAP_Plugin {
 			return '';
 		}
 		return 'https://www.linkedin.com/feed/update/' . rawurlencode($urn) . '/';
+	}
+
+	private static function build_post_share_status_items(int $post_id): array {
+		$linkedin_urn = (string)get_post_meta($post_id, self::META_SHARE_URN, true);
+		$x_post_id = (string)get_post_meta($post_id, self::META_X_POST_ID, true);
+		$fb_post_id = (string)get_post_meta($post_id, self::META_FB_POST_ID, true);
+		$ig_media_id = (string)get_post_meta($post_id, self::META_IG_MEDIA_ID, true);
+		$threads_post_id = (string)get_post_meta($post_id, self::META_THREADS_POST_ID, true);
+		$medium_post_id = (string)get_post_meta($post_id, self::META_MEDIUM_POST_ID, true);
+
+		return [
+			[
+				'key' => 'linkedin',
+				'label' => 'LinkedIn',
+				'color' => '#0a66c2',
+				'shared_at' => (int)get_post_meta($post_id, self::META_SHARED_AT, true),
+				'id' => $linkedin_urn,
+				'url' => self::linkedin_share_url_from_urn($linkedin_urn),
+			],
+			[
+				'key' => 'x',
+				'label' => 'X',
+				'color' => '#111111',
+				'shared_at' => (int)get_post_meta($post_id, self::META_X_SHARED_AT, true),
+				'id' => $x_post_id,
+				'url' => $x_post_id !== '' ? ('https://x.com/i/web/status/' . rawurlencode($x_post_id)) : '',
+			],
+			[
+				'key' => 'facebook',
+				'label' => 'Facebook',
+				'color' => '#1877f2',
+				'shared_at' => (int)get_post_meta($post_id, self::META_FB_SHARED_AT, true),
+				'id' => $fb_post_id,
+				'url' => $fb_post_id !== '' ? ('https://www.facebook.com/' . rawurlencode($fb_post_id)) : '',
+			],
+			[
+				'key' => 'instagram',
+				'label' => 'Instagram',
+				'color' => '#e4405f',
+				'shared_at' => (int)get_post_meta($post_id, self::META_IG_SHARED_AT, true),
+				'id' => $ig_media_id,
+				'url' => (string)get_post_meta($post_id, self::META_IG_PERMALINK, true),
+			],
+			[
+				'key' => 'threads',
+				'label' => 'Threads',
+				'color' => '#111111',
+				'shared_at' => (int)get_post_meta($post_id, self::META_THREADS_SHARED_AT, true),
+				'id' => $threads_post_id,
+				'url' => (string)get_post_meta($post_id, self::META_THREADS_PERMALINK, true),
+			],
+			[
+				'key' => 'medium',
+				'label' => 'Medium',
+				'color' => '#00ab6c',
+				'shared_at' => (int)get_post_meta($post_id, self::META_MEDIUM_SHARED_AT, true),
+				'id' => $medium_post_id,
+				'url' => (string)get_post_meta($post_id, self::META_MEDIUM_POST_URL, true),
+			],
+		];
+	}
+
+	private static function social_icon_svg(string $key): string {
+		$icons = [
+			'linkedin' => '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.98 3.5C4.98 4.88 3.86 6 2.5 6S0 4.88 0 3.5 1.12 1 2.5 1s2.48 1.12 2.48 2.5zM.5 8h4V23h-4V8zm7.5 0h3.8v2.05h.05c.53-1 1.83-2.05 3.77-2.05 4.03 0 4.78 2.65 4.78 6.1V23h-4v-7.9c0-1.88-.03-4.3-2.62-4.3-2.63 0-3.03 2.05-3.03 4.17V23h-4V8z"/></svg>',
+			'x' => '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14.56 10.16 23.55 0h-2.13l-7.8 8.82L7.39 0H.2l9.43 13.35L.2 24h2.13l8.24-9.31L17.15 24h7.19l-9.78-13.84zm-2.92 3.3-.95-1.33L3.08 1.56h3.29l6.13 8.52.95 1.33 7.98 11.08h-3.29l-6.5-9.03z"/></svg>',
+			'facebook' => '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.96h-1.51c-1.49 0-1.96.93-1.96 1.89v2.26h3.33l-.53 3.49h-2.8V24C19.61 23.1 24 18.1 24 12.07z"/></svg>',
+			'instagram' => '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.16c3.2 0 3.58.01 4.85.07 1.17.05 1.8.25 2.23.41.56.22.96.48 1.38.9.42.42.68.82.9 1.38.16.42.36 1.06.41 2.23.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.05 1.17-.25 1.8-.41 2.23-.22.56-.48.96-.9 1.38-.42.42-.82.68-1.38.9-.42.16-1.06.36-2.23.41-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-1.17-.05-1.8-.25-2.23-.41a3.71 3.71 0 0 1-1.38-.9 3.71 3.71 0 0 1-.9-1.38c-.16-.42-.36-1.06-.41-2.23-.06-1.27-.07-1.65-.07-4.85s.01-3.58.07-4.85c.05-1.17.25-1.8.41-2.23.22-.56.48-.96.9-1.38.42-.42.82-.68 1.38-.9.42-.16 1.06-.36 2.23-.41 1.27-.06 1.65-.07 4.85-.07zm0-2.16C8.74 0 8.33.01 7.05.07 5.78.13 4.9.33 4.14.63c-.79.31-1.46.72-2.13 1.39A5.9 5.9 0 0 0 .63 4.14C.33 4.9.13 5.78.07 7.05.01 8.33 0 8.74 0 12s.01 3.67.07 4.95c.06 1.27.26 2.15.56 2.91.31.79.72 1.46 1.39 2.13.67.67 1.34 1.08 2.13 1.39.76.3 1.64.5 2.91.56 1.28.06 1.69.07 4.95.07s3.67-.01 4.95-.07c1.27-.06 2.15-.26 2.91-.56.79-.31 1.46-.72 2.13-1.39.67-.67 1.08-1.34 1.39-2.13.3-.76.5-1.64.56-2.91.06-1.28.07-1.69.07-4.95s-.01-3.67-.07-4.95c-.06-1.27-.26-2.15-.56-2.91-.31-.79-.72-1.46-1.39-2.13A5.9 5.9 0 0 0 19.86.63c-.76-.3-1.64-.5-2.91-.56C15.67.01 15.26 0 12 0zm0 5.84a6.16 6.16 0 1 0 0 12.32 6.16 6.16 0 0 0 0-12.32zm0 10.16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm7.85-10.4a1.44 1.44 0 1 1-2.88 0 1.44 1.44 0 0 1 2.88 0z"/></svg>',
+			'threads' => '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M17.3 11.14c-.1-.05-.21-.1-.32-.15-.19-3.49-2.1-5.49-5.31-5.51h-.04c-1.92 0-3.52.82-4.5 2.31l1.77 1.21c.73-1.11 1.87-1.34 2.73-1.34h.03c1.06.01 1.86.32 2.38.91.38.44.64 1.04.77 1.79-.95-.16-1.98-.21-3.07-.15-3.07.18-5.04 1.97-4.91 4.46.06 1.26.69 2.34 1.76 3.04.9.59 2.06.88 3.27.81 1.6-.09 2.86-.7 3.75-1.81.68-.84 1.11-1.94 1.3-3.34.77.47 1.34 1.09 1.66 1.83.55 1.25.58 3.3-1.11 4.98-1.48 1.47-3.26 2.11-5.94 2.13-2.98-.02-5.23-.98-6.7-2.85-1.38-1.75-2.1-4.29-2.13-7.55.03-3.26.75-5.8 2.13-7.55 1.47-1.87 3.72-2.83 6.7-2.85 3 .02 5.29.99 6.8 2.89.74.93 1.3 2.1 1.67 3.48l2.08-.56c-.45-1.68-1.15-3.12-2.1-4.31C18.02 1.04 15.17.02 11.5 0h-.01C7.83.02 5 1.04 3.1 3.04 1.41 5.18.55 8.14.52 11.88v.01c.03 3.74.89 6.7 2.58 8.84 1.9 2 4.73 3.02 8.39 3.04h.01c3.24-.02 5.53-.87 7.41-2.73 2.47-2.45 2.4-5.52 1.59-7.37-.58-1.32-1.68-2.41-3.2-3.17zm-5.56 5.19c-1.34.08-2.74-.53-2.81-1.78-.05-.93.66-1.97 2.93-2.1.26-.02.52-.02.77-.02.84 0 1.63.08 2.34.23-.26 3.25-1.79 3.59-3.23 3.67z"/></svg>',
+			'medium' => '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M13.54 12c0 3.67-3.03 6.65-6.77 6.65S0 15.67 0 12s3.03-6.65 6.77-6.65 6.77 2.98 6.77 6.65zm7.43 0c0 3.45-1.52 6.25-3.39 6.25s-3.39-2.8-3.39-6.25 1.52-6.25 3.39-6.25 3.39 2.8 3.39 6.25zM24 12c0 3.09-.53 5.6-1.19 5.6s-1.19-2.51-1.19-5.6.53-5.6 1.19-5.6S24 8.91 24 12z"/></svg>',
+		];
+		return $icons[$key] ?? '';
 	}
 
 	private static function get_post_link(int $post_id, array $opt): string {

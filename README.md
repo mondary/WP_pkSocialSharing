@@ -2,7 +2,7 @@
 
 Plugin WordPress “maison” pour publier automatiquement sur LinkedIn, X, Facebook, Instagram, Threads et Medium à la publication d’un article.
 
-**Version actuelle :** `0.78`
+**Version actuelle :** `0.80`
 
 ## 📁 Structure du dépôt
 
