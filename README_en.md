@@ -1,6 +1,6 @@
 # WP PK SocialSharing
 
-![Project icon](icon.png)
+<img src="https://raw.githubusercontent.com/mondary/WP_pkSocialSharing/main/icon.png" alt="WP PK SocialSharing icon" width="96">
 
 [🇬🇧 EN](README_en.md) · [🇫🇷 FR](README.md)
 
