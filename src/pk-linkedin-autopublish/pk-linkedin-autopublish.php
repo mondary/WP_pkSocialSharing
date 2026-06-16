@@ -3,11 +3,13 @@ if (function_exists('opcache_invalidate')) {
 	opcache_invalidate(__FILE__, true);
 }
 /**
- * Plugin Name: WP PK SocialSharing
+ * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.1.1
+ * Version: 1.1.3
  * Author: cmondary
  * Author URI: https://github.com/mondary
+ * License: GPLv2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Requires at least: 6.0
  * Requires PHP: 7.4
  */
@@ -49,7 +51,9 @@ final class PKLIAP_Plugin {
 		add_action('admin_bar_menu', [__CLASS__, 'admin_bar_menu'], 100);
 		add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_plugins_icon']);
 		add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_admin_list_styles']);
-		add_action('rest_api_init', [__CLASS__, 'register_rest_routes']);
+		if (defined('PKLIAP_ENABLE_SYNC_ROUTES') && PKLIAP_ENABLE_SYNC_ROUTES) {
+			add_action('rest_api_init', [__CLASS__, 'register_rest_routes']);
+		}
 		add_filter('cron_schedules', [__CLASS__, 'cron_schedules']);
 		add_action('init', [__CLASS__, 'maybe_schedule_retry_cron']);
 
@@ -634,15 +638,15 @@ final class PKLIAP_Plugin {
 
 	public static function admin_menu(): void {
 		add_menu_page(
-			'WP PK SocialSharing',
-			'WP PK SocialSharing',
+			'PK SocialSharing',
+			'PK SocialSharing',
 			'manage_options',
 			'pk-socialsharing',
 			[__CLASS__, 'render_settings_page']
 		);
 		add_submenu_page(
 			'pk-socialsharing',
-			'WP PK SocialSharing',
+			'PK SocialSharing',
 			'Réglages',
 			'manage_options',
 			'pk-socialsharing',
@@ -973,7 +977,7 @@ final class PKLIAP_Plugin {
 
 		?>
 		<div class="wrap">
-			<h1>WP PK SocialSharing <span style="font-size:12px;opacity:.7;font-weight:600;">v<?php echo esc_html(self::get_plugin_version()); ?></span></h1>
+			<h1>PK SocialSharing <span style="font-size:12px;opacity:.7;font-weight:600;">v<?php echo esc_html(self::get_plugin_version()); ?></span></h1>
 			<p>Publication automatique sur LinkedIn lors de la mise en ligne d’un article (image mise en avant + extrait + lien).</p>
 
 			<style>
@@ -3789,7 +3793,7 @@ final class PKLIAP_Plugin {
 			return;
 		}
 
-		echo '<div class="notice notice-warning"><p><strong>WP PK SocialSharing :</strong> ' . esc_html(implode(' ', $alerts)) . '</p></div>';
+		echo '<div class="notice notice-warning"><p><strong>PK SocialSharing :</strong> ' . esc_html(implode(' ', $alerts)) . '</p></div>';
 	}
 
 	public static function admin_bar_menu(WP_Admin_Bar $admin_bar): void {

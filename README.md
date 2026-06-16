@@ -1,6 +1,6 @@
-# WP PK SocialSharing
+# PK SocialSharing
 
-<img src="ICON.png" alt="WP PK SocialSharing icon" width="96">
+<img src="ICON.png" alt="PK SocialSharing icon" width="96">
 
 [🇫🇷 FR](README.md) · [🇬🇧 EN](README_en.md)
 
@@ -22,7 +22,7 @@
 ## 🧠 Utilisation
 
 1. Installer et activer le plugin WordPress.
-2. Aller dans `WP Admin > WP PK SocialSharing`.
+2. Aller dans `WP Admin > PK SocialSharing`.
 3. Configurer les réseaux nécessaires dans leurs onglets.
 4. Publier ou programmer un article WordPress.
 5. Vérifier le statut dans le dashboard ou dans la colonne “Partages” de la liste des articles.
@@ -74,15 +74,31 @@ Le code du plugin est dans :
 src/pk-linkedin-autopublish/
 ```
 
-Le nom du dossier reste `pk-linkedin-autopublish` pour compatibilité avec les installations existantes, mais le plugin affiché dans WordPress s’appelle désormais `WP PK SocialSharing`.
+Le nom du dossier reste `pk-linkedin-autopublish` pour compatibilité avec les installations existantes, mais le plugin affiché dans WordPress s’appelle désormais `PK SocialSharing`.
+
+Pour générer un zip de première soumission WordPress.org :
+
+```bash
+bash <(awk '/^```bash run$/{f=1;next}/^```$/{if(f){exit}}f' .agent/-pkwpsyncstore/SKILL.md) \
+  --local-dir /Users/clm/Documents/GitHub/PROJECTS/WP_PKSocialSharing/src/pk-linkedin-autopublish \
+  --zip --zip-slug pk-socialsharing
+```
+
+Statut WordPress.org :
+
+- Slug assigné : `pk-socialsharing`.
+- Version soumise : `1.1.3`.
+- Scan automatique WordPress.org : `Pass`.
+- Statut au 2026-06-16 : `Awaiting Review`.
+- Les prochaines mises à jour passeront par SVN après approbation.
 
 ## 🧪 Installation
 
 Installation manuelle :
 
 1. Copier `src/pk-linkedin-autopublish/` dans `wp-content/plugins/pk-linkedin-autopublish/`.
-2. Activer `WP PK SocialSharing` depuis `Extensions`.
-3. Ouvrir `WP Admin > WP PK SocialSharing`.
+2. Activer `PK SocialSharing` depuis `Extensions`.
+3. Ouvrir `WP Admin > PK SocialSharing`.
 4. Configurer les réseaux souhaités.
 
 Mise à jour live :
@@ -92,7 +108,9 @@ Mise à jour live :
 
 ## 🧾 Changelog
 
-- `1.1.1` : renommage documentation/plugin en `WP PK SocialSharing`, README FR/EN, guide Meta clarifié.
+- `1.1.3` : ajout de la licence GPL dans le header principal pour la validation WordPress.org.
+- `1.1.2` : renommage public en `PK SocialSharing` pour respecter les règles WordPress.org.
+- `1.1.1` : renommage documentation/plugin autour du nom SocialSharing, README FR/EN, guide Meta clarifié.
 - `1.1.0` : connexion Meta OAuth longue durée, détection automatique Facebook/Instagram, dashboard et colonne de statuts.
 - `0.91` : conversion d’un token Graph Explorer court en token longue durée.
 - `0.90` : barre admin simplifiée avec libellé texte et badge.

@@ -2,4 +2,5 @@
 .DS_Store
 extension/*.zip
 extension/release/
+build/
 .vscode/

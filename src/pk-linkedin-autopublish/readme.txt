@@ -1,10 +1,10 @@
-=== WP PK SocialSharing ===
+=== PK SocialSharing ===
 Contributors: pk
 Tags: linkedin, facebook, instagram, threads, medium, x, twitter, social, autopublish
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.1.1
+Stable tag: 1.1.3
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram, Threads et Medium lors de la publication.
@@ -25,7 +25,7 @@ Fonctionnalites :
 * Medium : publication via integration token, contenu HTML et canonical URL WordPress
 * Connexion Meta OAuth pour obtenir un token longue duree et remplir Facebook/Instagram proprement
 * Journal de debug interne visible dans l'admin
-* Page de reglages WP PK SocialSharing
+* Page de reglages PK SocialSharing
 
 == Installation ==
 
@@ -44,8 +44,14 @@ Fonctionnalites :
 
 == Changelog ==
 
+= 1.1.3 =
+* Ajout des champs License et License URI dans le header principal pour la validation WordPress.org
+
+= 1.1.2 =
+* Renommage public en PK SocialSharing pour respecter les regles WordPress.org sur les noms d'extensions
+
 = 1.1.1 =
-* Renommage du plugin et de la documentation en WP PK SocialSharing
+* Renommage du plugin et de la documentation autour du nouveau nom SocialSharing
 * Ajout d'un README francais et d'un README anglais alignes
 * Clarification du guide Meta: App ID et App Secret viennent du dashboard Meta, pas de Graph Explorer
 

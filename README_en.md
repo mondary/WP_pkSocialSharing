@@ -1,6 +1,6 @@
-# WP PK SocialSharing
+# PK SocialSharing
 
-<img src="ICON.png" alt="WP PK SocialSharing icon" width="96">
+<img src="ICON.png" alt="PK SocialSharing icon" width="96">
 
 [🇬🇧 EN](README_en.md) · [🇫🇷 FR](README.md)
 
@@ -22,7 +22,7 @@
 ## 🧠 Usage
 
 1. Install and activate the WordPress plugin.
-2. Go to `WP Admin > WP PK SocialSharing`.
+2. Go to `WP Admin > PK SocialSharing`.
 3. Configure the networks you need in their tabs.
 4. Publish or schedule a WordPress post.
 5. Check the status from the dashboard or from the “Shares” column in the posts list.
@@ -74,15 +74,31 @@ The plugin source lives in:
 src/pk-linkedin-autopublish/
 ```
 
-The folder name remains `pk-linkedin-autopublish` for compatibility with existing installs, but the plugin shown in WordPress is now named `WP PK SocialSharing`.
+The folder name remains `pk-linkedin-autopublish` for compatibility with existing installs, but the plugin shown in WordPress is now named `PK SocialSharing`.
+
+To generate a first-submission WordPress.org zip:
+
+```bash
+bash <(awk '/^```bash run$/{f=1;next}/^```$/{if(f){exit}}f' .agent/-pkwpsyncstore/SKILL.md) \
+  --local-dir /Users/clm/Documents/GitHub/PROJECTS/WP_PKSocialSharing/src/pk-linkedin-autopublish \
+  --zip --zip-slug pk-socialsharing
+```
+
+WordPress.org status:
+
+- Assigned slug: `pk-socialsharing`.
+- Submitted version: `1.1.3`.
+- WordPress.org automated scan: `Pass`.
+- Status on 2026-06-16: `Awaiting Review`.
+- Future updates will go through SVN after approval.
 
 ## 🧪 Installation
 
 Manual installation:
 
 1. Copy `src/pk-linkedin-autopublish/` to `wp-content/plugins/pk-linkedin-autopublish/`.
-2. Activate `WP PK SocialSharing` from `Plugins`.
-3. Open `WP Admin > WP PK SocialSharing`.
+2. Activate `PK SocialSharing` from `Plugins`.
+3. Open `WP Admin > PK SocialSharing`.
 4. Configure the networks you want to use.
 
 Live update:
@@ -92,7 +108,9 @@ Live update:
 
 ## 🧾 Changelog
 
-- `1.1.1`: renamed documentation/plugin to `WP PK SocialSharing`, added FR/EN README, clarified Meta guide.
+- `1.1.3`: added GPL license fields to the main plugin header for WordPress.org validation.
+- `1.1.2`: public rename to `PK SocialSharing` to comply with WordPress.org plugin-name rules.
+- `1.1.1`: renamed documentation/plugin around the SocialSharing name, added FR/EN README, clarified Meta guide.
 - `1.1.0`: long-lived Meta OAuth connection, automatic Facebook/Instagram detection, dashboard and share-status column.
 - `0.91`: converted a short Graph Explorer token into a long-lived token.
 - `0.90`: simplified admin bar with text label and badge.
