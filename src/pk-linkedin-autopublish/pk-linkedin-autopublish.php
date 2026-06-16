@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK LinkedIn Auto Publish
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 0.80
+ * Version: 1.1.0
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * Requires at least: 6.0
@@ -67,6 +67,8 @@ final class PKLIAP_Plugin {
 		add_action('admin_post_pkliap_x_disconnect', [__CLASS__, 'handle_x_disconnect']);
 		add_action('admin_post_pkliap_x_check', [__CLASS__, 'handle_x_check']);
 		add_action('admin_post_pkliap_clear_network_error', [__CLASS__, 'handle_clear_network_error']);
+		add_action('admin_post_pkliap_meta_connect', [__CLASS__, 'handle_meta_connect']);
+		add_action('admin_post_pkliap_meta_oauth_callback', [__CLASS__, 'handle_meta_oauth_callback']);
 
 		add_action('transition_post_status', [__CLASS__, 'on_transition_post_status'], 10, 3);
 		add_action('pkliap_async_share_task', [__CLASS__, 'do_async_share'], 10, 1);
@@ -143,14 +145,15 @@ final class PKLIAP_Plugin {
 		wp_register_style($handle, false, [], self::get_plugin_version());
 		wp_enqueue_style($handle);
 		wp_add_inline_style($handle, '
-			.column-pkliap_share_status{width:178px}
-			.pkliap-share-list{display:flex;gap:6px;align-items:center;justify-content:flex-start;max-width:178px}
+			.column-pkliap_share_status{width:178px;min-width:80px}
+			.pkliap-share-list{display:flex;gap:6px;align-items:center;justify-content:flex-start;max-width:178px;flex-wrap:wrap}
 			.pkliap-share-icon{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border:1px solid #dcdcde;border-radius:50%;background:#f6f7f7;color:#8c8f94;text-decoration:none;box-sizing:border-box}
 			.pkliap-share-icon svg{width:13px;height:13px;display:block;fill:currentColor}
 			.pkliap-share-icon.is-shared{color:var(--pkliap-share-color);border-color:color-mix(in srgb,var(--pkliap-share-color) 42%,#dcdcde);background:color-mix(in srgb,var(--pkliap-share-color) 10%,#fff)}
 			.pkliap-share-icon.is-missing{filter:grayscale(1);opacity:.52}
 			a.pkliap-share-icon:hover{transform:translateY(-1px);box-shadow:0 1px 3px rgba(0,0,0,.14)}
 			.pkliap-share-icon code{display:none}
+			@media screen and (max-width:782px){.column-pkliap_share_status{width:auto}.pkliap-share-list{max-width:none}}
 		');
 	}
 
@@ -193,8 +196,118 @@ final class PKLIAP_Plugin {
 			return;
 		}
 
+		echo self::render_share_icon_list($post_id, 'pkliap-share'); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+	}
+
+	private static function render_meta_token_card(array $opt, string $link_meta_graph_explorer): void {
+		$expires_at = (int)($opt['meta_user_access_token_expires_at'] ?? 0);
+		$expires_label = $expires_at > 0 ? wp_date('Y-m-d H:i', $expires_at) : '';
+		$link_meta_developer = 'https://developers.facebook.com/apps/';
+		$has_app_id = !empty($opt['meta_app_id']);
+		$has_app_secret = !empty($opt['meta_app_secret']);
+		$has_long_token = !empty($opt['meta_user_access_token']);
+		$days_left = ($expires_at > 0) ? (int)ceil(($expires_at - time()) / DAY_IN_SECONDS) : -1;
+		$redirect_uri = self::admin_url_action('pkliap_meta_oauth_callback');
+		$fb_connected = !empty($opt['fb_page_id']) && !empty($opt['fb_access_token']);
+		$ig_connected = !empty($opt['ig_user_id']) && !empty($opt['ig_access_token']);
+		?>
+		<div class="pks-card pks-card--accent-warn pks-card--wide">
+			<div class="pks-card-title">Meta: connexion Facebook & Instagram</div>
+			<p class="pks-info" style="margin:-4px 0 12px;">Connecte ton compte Meta en un clic. Le plugin récupère automatiquement un token longue durée (~60 jours), ta Page Facebook et ton compte Instagram.</p>
+
+			<form method="post" action="options.php">
+				<?php settings_fields('pkliap'); ?>
+
+				<div class="pks-checkrow" style="margin-bottom:14px;">
+					<span class="pks-pill pks-pill--warn">1</span>
+					<div>
+						<strong>App ID et App Secret</strong>
+						<p class="description" style="margin:4px 0 8px;">
+							Trouve-les dans ton app Meta → <em>Settings &gt; Basic</em>.
+							<a href="<?php echo esc_url($link_meta_developer); ?>" target="_blank" rel="noopener">developers.facebook.com/apps</a>
+						</p>
+						<table class="form-table" role="presentation" style="margin:0;">
+							<tr>
+								<th scope="row" style="width:140px;">Meta App ID</th>
+								<td>
+									<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[meta_app_id]" value="<?php echo esc_attr((string)$opt['meta_app_id']); ?>"/>
+									<?php echo $has_app_id ? '<span class="pks-pill pks-pill--ok" style="margin-left:6px;">OK</span>' : ''; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Meta App Secret</th>
+								<td>
+									<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[meta_app_secret]" value="<?php echo esc_attr((string)$opt['meta_app_secret']); ?>"/>
+									<?php echo $has_app_secret ? '<span class="pks-pill pks-pill--ok" style="margin-left:6px;">OK</span>' : ''; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								</td>
+							</tr>
+						</table>
+					</div>
+				</div>
+
+				<div class="pks-checkrow" style="margin-bottom:14px;">
+					<span class="pks-pill pks-pill--warn">2</span>
+					<div>
+						<strong>URI de redirection OAuth</strong>
+						<p class="description" style="margin:4px 0 6px;">Copie cette URL et ajoute-la dans ton app Meta → <strong>Facebook Login for Business &gt; Settings</strong> → champ <em>"URI de redirection OAuth valides"</em>, puis enregistre.</p>
+						<div style="display:flex;gap:6px;align-items:center;margin:6px 0 0;">
+							<input class="large-text" type="text" value="<?php echo esc_attr($redirect_uri); ?>" readonly onclick="this.select()" style="flex:1;font-size:12px;"/>
+							<button type="button" class="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value).then(function(){})">Copier</button>
+						</div>
+					</div>
+				</div>
+
+				<?php submit_button('Enregistrer', 'secondary', 'submit', false); ?>
+			</form>
+
+			<div class="pks-checkrow" style="margin:16px 0 14px;">
+				<span class="pks-pill pks-pill--ok">3</span>
+				<div>
+					<strong>Connecter Facebook & Instagram</strong>
+					<p class="description" style="margin:4px 0 8px;">Une fois App ID, App Secret et URI de redirection configurés, clique ci-dessous. Facebook te demandera d'accepter les permissions et de choisir ta Page.</p>
+					<form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+						<input type="hidden" name="action" value="pkliap_meta_connect"/>
+						<?php wp_nonce_field('pkliap_meta_connect'); ?>
+						<?php submit_button('Connecter Facebook & Instagram', 'primary', 'submit', false); ?>
+					</form>
+				</div>
+			</div>
+
+			<?php if ($has_long_token): ?>
+				<div style="margin-top:12px;padding:10px 14px;background:#f0f6fc;border:1px solid #72aee6;border-radius:4px;">
+					<strong>Token Meta actif</strong>
+					<?php if ($expires_label !== ''): ?>
+						— expire le <strong><?php echo esc_html($expires_label); ?></strong>
+						<?php if ($days_left >= 0): ?>
+							(<?php echo $days_left > 0 ? esc_html($days_left . ' jour' . ($days_left > 1 ? 's' : '')) : 'expire aujourd\'hui'; ?>)
+						<?php endif; ?>
+						<?php if ($days_left >= 0 && $days_left <= 7): ?>
+							<strong style="color:#b32d2e;"> — Renouvelle bientôt.</strong>
+						<?php elseif ($days_left >= 0 && $days_left <= 14): ?>
+							<span style="color:#996800;"> — Moins de 2 semaines.</span>
+						<?php endif; ?>
+					<?php endif; ?>
+					<div style="margin-top:6px;">
+						<?php echo $fb_connected ? '<span class="pks-pill pks-pill--ok">FB</span> Page : <code>' . esc_html((string)$opt['fb_page_id']) . '</code>' : '<span class="pks-pill pks-pill--bad">FB</span> Non connectée'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+						&nbsp;&nbsp;
+						<?php echo $ig_connected ? '<span class="pks-pill pks-pill--ok">IG</span> User : <code>' . esc_html((string)$opt['ig_user_id']) . '</code>' : '<span class="pks-pill pks-pill--bad">IG</span> Non connecté'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+					</div>
+				</div>
+			<?php endif; ?>
+
+			<?php if (!empty($opt['last_meta_token_message'])): ?>
+				<p class="description" style="margin:8px 0 0;color:#0a6f24;"><?php echo esc_html((string)$opt['last_meta_token_message']); ?></p>
+			<?php endif; ?>
+			<?php if (!empty($opt['last_meta_token_error'])): ?>
+				<p class="description" style="margin:8px 0 0;color:#b32d2e;"><?php echo esc_html((string)$opt['last_meta_token_error']); ?></p>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	private static function render_share_icon_list(int $post_id, string $class_prefix): string {
 		$items = self::build_post_share_status_items($post_id);
-		echo '<div class="pkliap-share-list">';
+		$html = '<div class="' . esc_attr($class_prefix . '-list') . '">';
 		foreach ($items as $item) {
 			$label = (string)$item['label'];
 			$key = (string)$item['key'];
@@ -202,19 +315,20 @@ final class PKLIAP_Plugin {
 			$id = (string)$item['id'];
 			$color = (string)$item['color'];
 			$shared_at = (int)$item['shared_at'];
-			$class = $shared_at ? 'pkliap-share-icon is-shared' : 'pkliap-share-icon is-missing';
+			$class = $shared_at ? ($class_prefix . '-icon is-shared') : ($class_prefix . '-icon is-missing');
 			$style = $shared_at ? ('--pkliap-share-color:' . $color . ';') : '';
 			$title = $shared_at ? ($label . ' partagé le ' . wp_date('Y-m-d H:i', $shared_at)) : ($label . ' non partagé');
 			$icon = self::social_icon_svg($key);
 			if ($url !== '') {
-				echo '<a class="' . esc_attr($class) . '" style="' . esc_attr($style) . '" href="' . esc_url($url) . '" target="_blank" rel="noopener" title="' . esc_attr($title) . '" aria-label="' . esc_attr($title) . '">' . $icon . '</a>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				$html .= '<a class="' . esc_attr($class) . '" style="' . esc_attr($style) . '" href="' . esc_url($url) . '" target="_blank" rel="noopener" title="' . esc_attr($title) . '" aria-label="' . esc_attr($title) . '">' . $icon . '</a>';
 			} elseif ($shared_at && $id !== '') {
-				echo '<span class="' . esc_attr($class) . '" style="' . esc_attr($style) . '" title="' . esc_attr($title . ' - ID: ' . $id) . '" aria-label="' . esc_attr($title) . '">' . $icon . '<code>' . esc_html($id) . '</code></span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				$html .= '<span class="' . esc_attr($class) . '" style="' . esc_attr($style) . '" title="' . esc_attr($title . ' - ID: ' . $id) . '" aria-label="' . esc_attr($title) . '">' . $icon . '<code>' . esc_html($id) . '</code></span>';
 			} else {
-				echo '<span class="' . esc_attr($class) . '" title="' . esc_attr($title) . '" aria-label="' . esc_attr($title) . '">' . $icon . '</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				$html .= '<span class="' . esc_attr($class) . '" title="' . esc_attr($title) . '" aria-label="' . esc_attr($title) . '">' . $icon . '</span>';
 			}
 		}
-		echo '</div>';
+		$html .= '</div>';
+		return $html;
 	}
 
 	public static function register_rest_routes(): void {
@@ -439,6 +553,13 @@ final class PKLIAP_Plugin {
 			'last_x_error_at' => 0,
 			'last_x_check_message' => '',
 			'last_x_check_at' => 0,
+			'meta_app_id' => '',
+			'meta_app_secret' => '',
+			'meta_user_access_token' => '',
+			'meta_user_access_token_expires_at' => 0,
+			'last_meta_token_message' => '',
+			'last_meta_token_at' => 0,
+			'last_meta_token_error' => '',
 			'fb_enabled' => 0,
 			'fb_page_id' => '',
 			'fb_access_token' => '',
@@ -599,6 +720,10 @@ final class PKLIAP_Plugin {
 			$out['x_content_order'] = ($current_x_order === '') ? '' : self::normalize_content_order($current_x_order);
 		}
 		$out['x_text_template'] = array_key_exists('x_text_template', $value) ? sanitize_textarea_field((string)$value['x_text_template']) : (string)$current['x_text_template'];
+		$out['meta_app_id'] = array_key_exists('meta_app_id', $value) ? sanitize_text_field((string)$value['meta_app_id']) : (string)$current['meta_app_id'];
+		$out['meta_app_secret'] = array_key_exists('meta_app_secret', $value) ? sanitize_text_field((string)$value['meta_app_secret']) : (string)$current['meta_app_secret'];
+		$out['meta_user_access_token'] = array_key_exists('meta_user_access_token', $value) ? sanitize_text_field((string)$value['meta_user_access_token']) : (string)$current['meta_user_access_token'];
+		$out['meta_user_access_token_expires_at'] = array_key_exists('meta_user_access_token_expires_at', $value) ? (int)$value['meta_user_access_token_expires_at'] : (int)$current['meta_user_access_token_expires_at'];
 		$out['fb_enabled'] = array_key_exists('fb_enabled', $value) ? (empty($value['fb_enabled']) ? 0 : 1) : (int)$current['fb_enabled'];
 		$out['fb_page_id'] = array_key_exists('fb_page_id', $value) ? sanitize_text_field((string)$value['fb_page_id']) : (string)$current['fb_page_id'];
 		$out['fb_access_token'] = array_key_exists('fb_access_token', $value) ? sanitize_text_field((string)$value['fb_access_token']) : (string)$current['fb_access_token'];
@@ -768,10 +893,12 @@ final class PKLIAP_Plugin {
 		if ($whitelist) {
 			$planned_q = new WP_Query([
 				'post_type' => $whitelist,
-				'post_status' => 'publish',
+				'post_status' => ['publish', 'future'],
 				'fields' => 'ids',
 				'posts_per_page' => -1,
 				'no_found_rows' => true,
+				'orderby' => 'date',
+				'order' => 'ASC',
 				'date_query' => [[
 					'after' => wp_date('Y-m-d 00:00:00', $today_start),
 					'before' => wp_date('Y-m-d 23:59:59', $today_start),
@@ -829,6 +956,14 @@ final class PKLIAP_Plugin {
 				}
 			}
 		}
+		$tab_status = [
+			'linkedin' => self::network_tab_status('linkedin', !empty($opt['enabled']), $linkedin_connected, (string)($opt['last_share_error'] ?? '')),
+			'x' => self::network_tab_status('x', !empty($opt['x_enabled']), $x_connected, (string)($opt['last_x_error'] ?? '')),
+			'facebook' => self::network_tab_status('facebook', !empty($opt['fb_enabled']), $fb_connected, (string)($opt['last_fb_error'] ?? '')),
+			'instagram' => self::network_tab_status('instagram', !empty($opt['ig_enabled']), $ig_connected, (string)($opt['last_ig_error'] ?? '')),
+			'threads' => self::network_tab_status('threads', !empty($opt['threads_enabled']), $threads_connected, (string)($opt['last_threads_error'] ?? '')),
+			'medium' => self::network_tab_status('medium', !empty($opt['medium_enabled']), $medium_connected, (string)($opt['last_medium_error'] ?? '')),
+		];
 
 		?>
 		<div class="wrap">
@@ -889,7 +1024,12 @@ final class PKLIAP_Plugin {
 					border:1px solid var(--pks-border);background:#fff;color:#0f172a;font-weight:600;
 				}
 				.pks-network-tab.is-active{background:#0f172a;color:#fff;border-color:#0f172a}
-				.pks-network-pill{font-size:11px;opacity:.7}
+				.pks-network-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;opacity:.9}
+				.pks-network-dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#94a3b8;box-shadow:0 0 0 2px rgba(148,163,184,.16)}
+				.pks-network-dot--ok{background:#22c55e;box-shadow:0 0 0 2px rgba(34,197,94,.18)}
+				.pks-network-dot--warn{background:#f59e0b;box-shadow:0 0 0 2px rgba(245,158,11,.2)}
+				.pks-network-dot--bad{background:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.18)}
+				.pks-network-tab.is-active .pks-network-dot{box-shadow:0 0 0 2px rgba(255,255,255,.22)}
 				.pks-checklist{display:flex;flex-direction:column;gap:10px;margin:0}
 				.pks-checkrow{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--pks-border);border-radius:var(--pks-radius);background:var(--pks-bg)}
 				.pks-checkrow strong{display:block;font-size:13px}
@@ -910,6 +1050,16 @@ final class PKLIAP_Plugin {
 				.pks-utm-grid{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px}
 				.pks-utm-field{display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px;align-items:center}
 				.pks-utm-field input{width:100%;max-width:none}
+				.pks-dashboard-share-list{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+				.pks-dashboard-share-icon{width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:1px solid #dcdcde;border-radius:50%;background:#f6f7f7;color:#8c8f94;text-decoration:none;box-sizing:border-box}
+				.pks-dashboard-share-icon svg{width:16px;height:16px;display:block;fill:currentColor}
+				.pks-dashboard-share-icon.is-shared{color:var(--pkliap-share-color);border-color:color-mix(in srgb,var(--pkliap-share-color) 42%,#dcdcde);background:color-mix(in srgb,var(--pkliap-share-color) 10%,#fff)}
+				.pks-dashboard-share-icon.is-missing{filter:grayscale(1);opacity:.5}
+				a.pks-dashboard-share-icon:hover{transform:translateY(-1px);box-shadow:0 1px 3px rgba(0,0,0,.14)}
+				.pks-dashboard-share-icon code{display:none}
+				.pks-recap-network{display:flex;align-items:center;gap:8px}
+				.pks-recap-icon{width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:#f6f7f7;color:var(--pkliap-share-color);border:1px solid color-mix(in srgb,var(--pkliap-share-color) 35%,#dcdcde)}
+				.pks-recap-icon svg{width:14px;height:14px;fill:currentColor;display:block}
 				.pks-publication-table tbody{display:block}
 				.pks-publication-table tr{display:block;border-radius:10px}
 				@media (min-width: 1200px){
@@ -939,31 +1089,30 @@ final class PKLIAP_Plugin {
 				<div class="pks-network-tabs" role="tablist" aria-label="Réseaux sociaux">
 					<a class="pks-network-tab <?php echo $active_network === 'dashboard' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_dashboard); ?>" role="tab" aria-selected="<?php echo $active_network === 'dashboard' ? 'true' : 'false'; ?>">
 						Dashboard
-						<span class="pks-network-pill">Jour</span>
 					</a>
 					<a class="pks-network-tab <?php echo $active_network === 'linkedin' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_linkedin); ?>" role="tab" aria-selected="<?php echo $active_network === 'linkedin' ? 'true' : 'false'; ?>">
 						LinkedIn
-						<span class="pks-network-pill">Actif</span>
+						<span class="pks-network-pill"><span class="pks-network-dot pks-network-dot--<?php echo esc_attr($tab_status['linkedin']['tone']); ?>"></span><?php echo esc_html($tab_status['linkedin']['label']); ?></span>
 					</a>
 					<a class="pks-network-tab <?php echo $active_network === 'x' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_x); ?>" role="tab" aria-selected="<?php echo $active_network === 'x' ? 'true' : 'false'; ?>">
 						X (Twitter)
-						<span class="pks-network-pill">V2</span>
+						<span class="pks-network-pill"><span class="pks-network-dot pks-network-dot--<?php echo esc_attr($tab_status['x']['tone']); ?>"></span><?php echo esc_html($tab_status['x']['label']); ?></span>
 					</a>
 					<a class="pks-network-tab <?php echo $active_network === 'facebook' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_facebook); ?>" role="tab" aria-selected="<?php echo $active_network === 'facebook' ? 'true' : 'false'; ?>">
 						Facebook
-						<span class="pks-network-pill">V1</span>
+						<span class="pks-network-pill"><span class="pks-network-dot pks-network-dot--<?php echo esc_attr($tab_status['facebook']['tone']); ?>"></span><?php echo esc_html($tab_status['facebook']['label']); ?></span>
 					</a>
 					<a class="pks-network-tab <?php echo $active_network === 'instagram' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_instagram); ?>" role="tab" aria-selected="<?php echo $active_network === 'instagram' ? 'true' : 'false'; ?>">
 						Instagram
-						<span class="pks-network-pill">V1</span>
+						<span class="pks-network-pill"><span class="pks-network-dot pks-network-dot--<?php echo esc_attr($tab_status['instagram']['tone']); ?>"></span><?php echo esc_html($tab_status['instagram']['label']); ?></span>
 					</a>
 					<a class="pks-network-tab <?php echo $active_network === 'threads' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_threads); ?>" role="tab" aria-selected="<?php echo $active_network === 'threads' ? 'true' : 'false'; ?>">
 						Threads
-						<span class="pks-network-pill">V1</span>
+						<span class="pks-network-pill"><span class="pks-network-dot pks-network-dot--<?php echo esc_attr($tab_status['threads']['tone']); ?>"></span><?php echo esc_html($tab_status['threads']['label']); ?></span>
 					</a>
 					<a class="pks-network-tab <?php echo $active_network === 'medium' ? 'is-active' : ''; ?>" href="<?php echo esc_url($link_tab_medium); ?>" role="tab" aria-selected="<?php echo $active_network === 'medium' ? 'true' : 'false'; ?>">
 						Medium
-						<span class="pks-network-pill">V1</span>
+						<span class="pks-network-pill"><span class="pks-network-dot pks-network-dot--<?php echo esc_attr($tab_status['medium']['tone']); ?>"></span><?php echo esc_html($tab_status['medium']['label']); ?></span>
 					</a>
 				</div>
 
@@ -972,7 +1121,7 @@ final class PKLIAP_Plugin {
 						<div class="pks-card pks-card--accent-blue pks-card--wide">
 							<div class="pks-card-title">Récap du <?php echo esc_html($today_label); ?></div>
 							<p class="pks-info" style="margin:-4px 0 12px;">
-								Planifié = articles publiés aujourd’hui sur les types autorisés. Effectué = partages réalisés aujourd’hui (selon les metas <code>_pkliap_*_shared_at</code>).
+								Planifié = articles publiés ou programmés aujourd’hui sur les types autorisés. Effectué = partages réalisés aujourd’hui (selon les metas <code>_pkliap_*_shared_at</code>).
 							</p>
 							<table class="widefat striped" style="width:100%;border-collapse:collapse;">
 								<thead>
@@ -982,6 +1131,7 @@ final class PKLIAP_Plugin {
 										<th>Effectué</th>
 										<th>Échecs (log)</th>
 										<th>Connexion</th>
+										<th>Mode</th>
 									</tr>
 								</thead>
 								<tbody>
@@ -990,15 +1140,25 @@ final class PKLIAP_Plugin {
 										$planned = (int)($planned_by_net[$net] ?? 0);
 										$done = (int)($done_by_net[$net] ?? 0);
 										$failed = (int)($failed_by_net[$net] ?? 0);
-										$connected = !empty($cfg['connected']);
-										$enabled = !empty($cfg['enabled']);
+										$error = (string)($opt[(string)$cfg['err_key']] ?? '');
+										$conn_status = self::network_connection_status($net, !empty($cfg['connected']), $error);
+										$mode_status = self::network_mode_status($net, !empty($cfg['enabled']), !empty($cfg['connected']), $error);
+										$conn_class = $conn_status['tone'] === 'ok' ? 'pks-pill--ok' : ($conn_status['tone'] === 'warn' ? 'pks-pill--warn' : 'pks-pill--bad');
+										$mode_class = $mode_status['tone'] === 'ok' ? 'pks-pill--ok' : ($mode_status['tone'] === 'warn' ? 'pks-pill--warn' : 'pks-pill--bad');
+										$icon_color = (string)(self::network_icon_color($net));
 										?>
 										<tr>
-											<td><strong><?php echo esc_html((string)$cfg['label']); ?></strong> <?php echo $enabled ? '<span class="pks-pill pks-pill--ok">AUTO</span>' : '<span class="pks-pill pks-pill--warn">OFF</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											<td>
+												<span class="pks-recap-network">
+													<span class="pks-recap-icon" style="<?php echo esc_attr('--pkliap-share-color:' . $icon_color . ';'); ?>"><?php echo self::social_icon_svg($net); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></span>
+													<strong><?php echo esc_html((string)$cfg['label']); ?></strong>
+												</span>
+											</td>
 											<td><?php echo esc_html((string)$planned); ?></td>
 											<td><?php echo esc_html((string)$done); ?></td>
 											<td><?php echo esc_html((string)$failed); ?></td>
-											<td><?php echo $connected ? '<span class="pks-pill pks-pill--ok">Connecté</span>' : '<span class="pks-pill pks-pill--bad">Non connecté</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											<td><span class="pks-pill <?php echo esc_attr($conn_class); ?>"><?php echo esc_html((string)$conn_status['label']); ?></span></td>
+											<td><span class="pks-pill <?php echo esc_attr($mode_class); ?>"><?php echo esc_html((string)$mode_status['label']); ?></span></td>
 										</tr>
 									<?php endforeach; ?>
 								</tbody>
@@ -1008,86 +1168,49 @@ final class PKLIAP_Plugin {
 							</p>
 						</div>
 
-						<div class="pks-card pks-card--accent-purple">
-							<div class="pks-card-title">Statut des connexions</div>
-							<div class="pks-checklist">
-								<div class="pks-checkrow">
-									<span class="pks-pill <?php echo $health['linkedin']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['linkedin']['ok'] ? 'OK' : 'KO'; ?></span>
-									<div>
-										<strong>LinkedIn</strong>
-										<p><?php echo esc_html($health['linkedin']['message']); ?></p>
-									</div>
-								</div>
-								<div class="pks-checkrow">
-									<span class="pks-pill <?php echo $health['x']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['x']['ok'] ? 'OK' : 'KO'; ?></span>
-									<div>
-										<strong>X</strong>
-										<p><?php echo esc_html($health['x']['message']); ?></p>
-									</div>
-								</div>
-								<div class="pks-checkrow">
-									<span class="pks-pill <?php echo $health['facebook']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['facebook']['ok'] ? 'OK' : 'KO'; ?></span>
-									<div>
-										<strong>Facebook</strong>
-										<p><?php echo esc_html($health['facebook']['message']); ?></p>
-									</div>
-								</div>
-								<div class="pks-checkrow">
-									<span class="pks-pill <?php echo $health['instagram']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['instagram']['ok'] ? 'OK' : 'KO'; ?></span>
-									<div>
-										<strong>Instagram</strong>
-										<p><?php echo esc_html($health['instagram']['message']); ?></p>
-									</div>
-								</div>
-								<div class="pks-checkrow">
-									<span class="pks-pill <?php echo $health['threads']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['threads']['ok'] ? 'OK' : 'KO'; ?></span>
-									<div>
-										<strong>Threads</strong>
-										<p><?php echo esc_html($health['threads']['message']); ?></p>
-									</div>
-								</div>
-								<div class="pks-checkrow">
-									<span class="pks-pill <?php echo $health['medium']['ok'] ? 'pks-pill--ok' : 'pks-pill--bad'; ?>"><?php echo $health['medium']['ok'] ? 'OK' : 'KO'; ?></span>
-									<div>
-										<strong>Medium</strong>
-										<p><?php echo esc_html($health['medium']['message']); ?></p>
-									</div>
-								</div>
-							</div>
-						</div>
-
-						<div class="pks-card pks-card--accent-warn">
-							<div class="pks-card-title">Dernières erreurs</div>
-							<?php
-							$errs = [];
-							foreach ($net_cfg as $net => $cfg) {
-								$k = (string)$cfg['err_key'];
-								$ka = $k . '_at';
-								$msg = (string)($opt[$k] ?? '');
-								$at = (int)($opt[$ka] ?? 0);
-								if ($msg) {
-									$errs[] = [
-										'net' => (string)$cfg['label'],
-										'msg' => $msg,
-										'at' => $at,
-									];
-								}
-							}
-							usort($errs, fn($a, $b) => (int)$b['at'] <=> (int)$a['at']);
-							?>
-							<?php if (!$errs): ?>
-								<p class="pks-info" style="margin:0;">Aucune erreur enregistrée.</p>
+						<div class="pks-card pks-card--accent-ok pks-card--wide">
+							<div class="pks-card-title">Articles du jour</div>
+							<?php if (!$planned_post_ids): ?>
+								<p class="pks-info" style="margin:0;">Aucun article publié ou planifié aujourd’hui sur les types autorisés.</p>
 							<?php else: ?>
-								<ul style="margin:0;padding-left:18px;">
-									<?php foreach (array_slice($errs, 0, 8) as $e): ?>
-										<li>
-											<strong><?php echo esc_html((string)$e['net']); ?></strong> — <?php echo esc_html((string)$e['msg']); ?>
-											<?php if (!empty($e['at'])): ?>
-												<span class="description"> (<?php echo esc_html(wp_date('Y-m-d H:i', (int)$e['at'])); ?>)</span>
-											<?php endif; ?>
-										</li>
-									<?php endforeach; ?>
-								</ul>
+								<table class="widefat striped" style="width:100%;border-collapse:collapse;">
+									<thead>
+										<tr>
+											<th style="width:70px;">Image</th>
+											<th>Article</th>
+											<th style="width:110px;">Statut</th>
+											<th style="width:90px;">Heure</th>
+											<th style="width:230px;">Partages</th>
+										</tr>
+									</thead>
+									<tbody>
+										<?php foreach ($planned_post_ids as $planned_post_id): ?>
+											<?php
+											$planned_post = get_post($planned_post_id);
+											if (!$planned_post) {
+												continue;
+											}
+											$edit_url = get_edit_post_link($planned_post_id, '');
+											$view_url = get_permalink($planned_post_id);
+											$is_future = $planned_post->post_status === 'future';
+											$thumb_html = get_the_post_thumbnail($planned_post_id, [56, 56], ['style' => 'width:56px;height:56px;object-fit:cover;border-radius:6px;background:#f3f4f6;']);
+											?>
+											<tr>
+												<td><?php echo $thumb_html ?: '<span style="display:inline-flex;width:56px;height:56px;align-items:center;justify-content:center;border-radius:6px;background:#f3f4f6;color:#94a3b8;">—</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+												<td>
+													<strong><?php echo esc_html(get_the_title($planned_post_id) ?: '(Sans titre)'); ?></strong>
+													<div class="row-actions">
+														<?php if ($edit_url): ?><span><a href="<?php echo esc_url($edit_url); ?>">Modifier</a> | </span><?php endif; ?>
+														<?php if (!$is_future): ?><span><a href="<?php echo esc_url($view_url); ?>" target="_blank" rel="noopener">Voir</a></span><?php endif; ?>
+													</div>
+												</td>
+												<td><?php echo $is_future ? '<span class="pks-pill pks-pill--warn">Planifié</span>' : '<span class="pks-pill pks-pill--ok">Publié</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+												<td><?php echo esc_html(wp_date('H:i', (int)get_post_time('U', true, $planned_post))); ?></td>
+												<td><?php echo self::render_share_icon_list($planned_post_id, 'pks-dashboard-share'); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											</tr>
+										<?php endforeach; ?>
+									</tbody>
+								</table>
 							<?php endif; ?>
 						</div>
 					</div>
@@ -1241,12 +1364,13 @@ final class PKLIAP_Plugin {
 							<div class="pks-card-title">Test X</div>
 							<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié. <strong>Publier maintenant</strong> utilise l’API X et nécessite des crédits. <strong>Publier via navigateur</strong> ouvre X avec le texte prérempli et ne consomme pas de crédits API.</p>
 							<?php
+							$x_test_limit = max(20, absint($_GET[‘test_limit_x’] ?? 0) ?: 20);
 							$posts = get_posts([
-								'post_type' => $opt['post_type_whitelist'],
-								'post_status' => 'publish',
-								'numberposts' => 20,
-								'orderby' => 'date',
-								'order' => 'DESC',
+								‘post_type’ => $opt[‘post_type_whitelist’],
+								‘post_status’ => ‘publish’,
+								‘numberposts’ => $x_test_limit,
+								‘orderby’ => ‘date’,
+								‘order’ => ‘DESC’,
 							]);
 							?>
 							<table class="widefat striped" style="width:100%;">
@@ -1294,10 +1418,16 @@ final class PKLIAP_Plugin {
 								<?php endif; ?>
 								</tbody>
 							</table>
+							<?php if (count($posts) >= $x_test_limit): ?>
+								<p style="text-align:center;margin:12px 0 0;">
+									<a class="button button-secondary" href="<?php echo esc_url(add_query_arg('test_limit_x', $x_test_limit + 20, $link_tab_x)); ?>">Charger plus d'articles</a>
+								</p>
+							<?php endif; ?>
 						</div>
 					</div>
 				<?php elseif ($active_network === 'facebook'): ?>
 					<div class="pks-grid">
+						<?php self::render_meta_token_card($opt, $link_meta_graph_explorer); ?>
 						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
 							<div class="pks-card-title">Facebook: connexion</div>
 							<?php settings_fields('pkliap'); ?>
@@ -1382,10 +1512,11 @@ final class PKLIAP_Plugin {
 							<div class="pks-card-title">Test Facebook</div>
 							<p class="pks-info" style="margin:0 0 12px;">Docs: <a href="<?php echo esc_url($link_meta_fb_pages_docs); ?>" target="_blank" rel="noopener">Pages API Posts</a></p>
 							<?php
+							$fb_test_limit = max(20, absint($_GET['test_limit_fb'] ?? 0) ?: 20);
 							$posts = get_posts([
 								'post_type' => $opt['post_type_whitelist'],
 								'post_status' => 'publish',
-								'numberposts' => 20,
+								'numberposts' => $fb_test_limit,
 								'orderby' => 'date',
 								'order' => 'DESC',
 							]);
@@ -1431,10 +1562,16 @@ final class PKLIAP_Plugin {
 								<?php endif; ?>
 								</tbody>
 							</table>
+							<?php if (count($posts) >= $fb_test_limit): ?>
+								<p style="text-align:center;margin:12px 0 0;">
+									<a class="button button-secondary" href="<?php echo esc_url(add_query_arg('test_limit_fb', $fb_test_limit + 20, $link_tab_facebook)); ?>">Charger plus d'articles</a>
+								</p>
+							<?php endif; ?>
 						</div>
 					</div>
 				<?php elseif ($active_network === 'instagram'): ?>
 					<div class="pks-grid">
+						<?php self::render_meta_token_card($opt, $link_meta_graph_explorer); ?>
 						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
 							<div class="pks-card-title">Instagram: connexion en 3 étapes</div>
 							<?php settings_fields('pkliap'); ?>
@@ -1507,10 +1644,11 @@ final class PKLIAP_Plugin {
 							<div class="pks-card-title">Test Instagram</div>
 							<p class="pks-info" style="margin:0 0 12px;">Docs: <a href="<?php echo esc_url($link_meta_ig_publish_docs); ?>" target="_blank" rel="noopener">Instagram Content Publishing</a></p>
 							<?php
+							$ig_test_limit = max(20, absint($_GET['test_limit_ig'] ?? 0) ?: 20);
 							$posts = get_posts([
 								'post_type' => $opt['post_type_whitelist'],
 								'post_status' => 'publish',
-								'numberposts' => 20,
+								'numberposts' => $ig_test_limit,
 								'orderby' => 'date',
 								'order' => 'DESC',
 							]);
@@ -1556,6 +1694,11 @@ final class PKLIAP_Plugin {
 								<?php endif; ?>
 								</tbody>
 							</table>
+							<?php if (count($posts) >= $ig_test_limit): ?>
+								<p style="text-align:center;margin:12px 0 0;">
+									<a class="button button-secondary" href="<?php echo esc_url(add_query_arg('test_limit_ig', $ig_test_limit + 20, $link_tab_instagram)); ?>">Charger plus d'articles</a>
+								</p>
+							<?php endif; ?>
 						</div>
 					</div>
 				<?php elseif ($active_network === 'threads'): ?>
@@ -1618,10 +1761,11 @@ final class PKLIAP_Plugin {
 							<div class="pks-card-title">Test Threads</div>
 							<p class="pks-info" style="margin:0 0 12px;">Docs: <a href="<?php echo esc_url($link_meta_threads_docs); ?>" target="_blank" rel="noopener">Threads API Posts</a></p>
 							<?php
+							$threads_test_limit = max(20, absint($_GET['test_limit_threads'] ?? 0) ?: 20);
 							$posts = get_posts([
 								'post_type' => $opt['post_type_whitelist'],
 								'post_status' => 'publish',
-								'numberposts' => 20,
+								'numberposts' => $threads_test_limit,
 								'orderby' => 'date',
 								'order' => 'DESC',
 							]);
@@ -1666,6 +1810,11 @@ final class PKLIAP_Plugin {
 								<?php endif; ?>
 								</tbody>
 							</table>
+							<?php if (count($posts) >= $threads_test_limit): ?>
+								<p style="text-align:center;margin:12px 0 0;">
+									<a class="button button-secondary" href="<?php echo esc_url(add_query_arg('test_limit_threads', $threads_test_limit + 20, $link_tab_threads)); ?>">Charger plus d'articles</a>
+								</p>
+							<?php endif; ?>
 						</div>
 					</div>
 				<?php elseif ($active_network === 'medium'): ?>
@@ -1729,10 +1878,11 @@ final class PKLIAP_Plugin {
 							<div class="pks-card-title">Test Medium</div>
 							<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié pour créer le post Medium.</p>
 							<?php
+							$medium_test_limit = max(20, absint($_GET['test_limit_medium'] ?? 0) ?: 20);
 							$posts = get_posts([
 								'post_type' => $opt['post_type_whitelist'],
 								'post_status' => 'publish',
-								'numberposts' => 20,
+								'numberposts' => $medium_test_limit,
 								'orderby' => 'date',
 								'order' => 'DESC',
 							]);
@@ -1778,6 +1928,11 @@ final class PKLIAP_Plugin {
 								<?php endif; ?>
 								</tbody>
 							</table>
+							<?php if (count($posts) >= $medium_test_limit): ?>
+								<p style="text-align:center;margin:12px 0 0;">
+									<a class="button button-secondary" href="<?php echo esc_url(add_query_arg('test_limit_medium', $medium_test_limit + 20, $link_tab_medium)); ?>">Charger plus d'articles</a>
+								</p>
+							<?php endif; ?>
 						</div>
 					</div>
 				<?php else: ?>
@@ -2082,10 +2237,11 @@ final class PKLIAP_Plugin {
 						<div class="pks-card-title">Test</div>
 						<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié pour tenter un partage LinkedIn.</p>
 						<?php
+						$linkedin_test_limit = max(20, absint($_GET['test_limit_linkedin'] ?? 0) ?: 20);
 						$posts = get_posts([
 							'post_type' => $opt['post_type_whitelist'],
 							'post_status' => 'publish',
-							'numberposts' => 20,
+							'numberposts' => $linkedin_test_limit,
 							'orderby' => 'date',
 							'order' => 'DESC',
 						]);
@@ -2131,6 +2287,11 @@ final class PKLIAP_Plugin {
 							<?php endif; ?>
 							</tbody>
 						</table>
+						<?php if (count($posts) >= $linkedin_test_limit): ?>
+							<p style="text-align:center;margin:12px 0 0;">
+								<a class="button button-secondary" href="<?php echo esc_url(add_query_arg('test_limit_linkedin', $linkedin_test_limit + 20, $link_tab_linkedin)); ?>">Charger plus d'articles</a>
+							</p>
+						<?php endif; ?>
 					</div>
 
 					<div class="pks-card pks-card--accent-warn pks-card--wide">
@@ -2915,6 +3076,198 @@ final class PKLIAP_Plugin {
 		exit;
 	}
 
+	public static function handle_meta_connect(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_meta_connect');
+
+		$opt = self::get_options();
+		$app_id = trim((string)($opt['meta_app_id'] ?? ''));
+		$app_secret = trim((string)($opt['meta_app_secret'] ?? ''));
+
+		if ($app_id === '' || $app_secret === '') {
+			self::update_options([
+				'last_meta_token_error' => 'Meta: App ID et App Secret sont obligatoires.',
+				'last_meta_token_at' => time(),
+			]);
+			wp_safe_redirect(self::settings_url(['network' => 'facebook']));
+			exit;
+		}
+
+		$redirect_uri = self::admin_url_action('pkliap_meta_oauth_callback');
+		$state = wp_generate_password(24, false, false);
+		$user_id = get_current_user_id();
+		set_transient('pkliap_meta_oauth_state_' . $user_id, $state, 10 * MINUTE_IN_SECONDS);
+
+		$scope = [
+			'pages_show_list',
+			'pages_read_engagement',
+			'pages_manage_posts',
+			'instagram_basic',
+			'instagram_content_publish',
+		];
+
+		$auth_url = 'https://www.facebook.com/v23.0/dialog/oauth?' . http_build_query([
+			'client_id' => $app_id,
+			'redirect_uri' => $redirect_uri,
+			'state' => $state,
+			'scope' => implode(',', $scope),
+			'response_type' => 'code',
+		], '', '&', PHP_QUERY_RFC3986);
+
+		wp_redirect($auth_url);
+		exit;
+	}
+
+	public static function handle_meta_oauth_callback(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+
+		$state = isset($_GET['state']) ? sanitize_text_field((string)wp_unslash($_GET['state'])) : '';
+		$user_id = get_current_user_id();
+		$expected_state = (string)get_transient('pkliap_meta_oauth_state_' . $user_id);
+		delete_transient('pkliap_meta_oauth_state_' . $user_id);
+
+		if (!$state || !$expected_state || !hash_equals($expected_state, $state)) {
+			self::update_options([
+				'last_meta_token_error' => 'State OAuth Meta invalide. Réessaie la connexion.',
+				'last_meta_token_at' => time(),
+			]);
+			wp_safe_redirect(self::settings_url(['network' => 'facebook']));
+			exit;
+		}
+
+		if (isset($_GET['error'])) {
+			$error_msg = sanitize_text_field((string)wp_unslash($_GET['error']));
+			$error_desc = isset($_GET['error_description']) ? sanitize_text_field((string)wp_unslash($_GET['error_description'])) : '';
+			self::update_options([
+				'last_meta_token_error' => 'Meta OAuth refusé : ' . $error_msg . ($error_desc ? ' — ' . $error_desc : ''),
+				'last_meta_token_at' => time(),
+			]);
+			wp_safe_redirect(self::settings_url(['network' => 'facebook']));
+			exit;
+		}
+
+		$code = isset($_GET['code']) ? sanitize_text_field((string)wp_unslash($_GET['code'])) : '';
+		if (!$code) {
+			self::update_options([
+				'last_meta_token_error' => 'Meta OAuth: code manquant dans le callback.',
+				'last_meta_token_at' => time(),
+			]);
+			wp_safe_redirect(self::settings_url(['network' => 'facebook']));
+			exit;
+		}
+
+		$opt = self::get_options();
+		$app_id = trim((string)($opt['meta_app_id'] ?? ''));
+		$app_secret = trim((string)($opt['meta_app_secret'] ?? ''));
+		$redirect_uri = self::admin_url_action('pkliap_meta_oauth_callback');
+
+		$short_res = wp_remote_get(add_query_arg([
+			'client_id' => $app_id,
+			'redirect_uri' => $redirect_uri,
+			'client_secret' => $app_secret,
+			'code' => $code,
+		], 'https://graph.facebook.com/v23.0/oauth/access_token'), ['timeout' => 45]);
+
+		if (is_wp_error($short_res)) {
+			self::update_options([
+				'last_meta_token_error' => 'Meta: impossible de récupérer le token court. ' . $short_res->get_error_message(),
+				'last_meta_token_at' => time(),
+			]);
+			wp_safe_redirect(self::settings_url(['network' => 'facebook']));
+			exit;
+		}
+
+		$short_code = (int)wp_remote_retrieve_response_code($short_res);
+		$short_body = json_decode((string)wp_remote_retrieve_body($short_res), true);
+
+		if ($short_code < 200 || $short_code >= 300) {
+			$msg = 'Meta: échange code → token court échoué (HTTP ' . $short_code . ').';
+			if (is_array($short_body) && !empty($short_body['error']['message'])) {
+				$msg .= ' ' . (string)$short_body['error']['message'];
+			}
+			self::update_options([
+				'last_meta_token_error' => $msg,
+				'last_meta_token_at' => time(),
+			]);
+			wp_safe_redirect(self::settings_url(['network' => 'facebook']));
+			exit;
+		}
+
+		$short_token = (string)($short_body['access_token'] ?? '');
+		if ($short_token === '') {
+			self::update_options([
+				'last_meta_token_error' => 'Meta: réponse token court invalide (access_token manquant).',
+				'last_meta_token_at' => time(),
+			]);
+			wp_safe_redirect(self::settings_url(['network' => 'facebook']));
+			exit;
+		}
+
+		$exchange = self::meta_exchange_long_lived_token($app_id, $app_secret, $short_token);
+		if (is_wp_error($exchange)) {
+			self::update_options([
+				'last_meta_token_error' => $exchange->get_error_message(),
+				'last_meta_token_at' => time(),
+			]);
+			wp_safe_redirect(self::settings_url(['network' => 'facebook']));
+			exit;
+		}
+
+		$long_token = (string)($exchange['access_token'] ?? '');
+		$expires_in = (int)($exchange['expires_in'] ?? 0);
+		$expires_at = $expires_in > 0 ? (time() + $expires_in - 60) : 0;
+		$updates = [
+			'meta_user_access_token' => $long_token,
+			'meta_user_access_token_expires_at' => $expires_at,
+			'ig_access_token' => $long_token,
+			'last_meta_token_error' => '',
+			'last_meta_token_at' => time(),
+			'last_fb_error' => '',
+			'last_fb_error_at' => 0,
+			'last_ig_error' => '',
+			'last_ig_error_at' => 0,
+		];
+
+		$accounts = self::meta_graph_get('/me/accounts', [
+			'fields' => 'id,name,access_token,instagram_business_account{id,username}',
+		], $long_token);
+		if (!is_wp_error($accounts)) {
+			$pages = is_array($accounts['body']['data'] ?? null) ? $accounts['body']['data'] : [];
+			$selected = self::select_meta_page($pages, (string)($opt['fb_page_id'] ?? ''));
+			if ($selected) {
+				if (!empty($selected['id'])) {
+					$updates['fb_page_id'] = (string)$selected['id'];
+				}
+				if (!empty($selected['access_token'])) {
+					$updates['fb_access_token'] = (string)$selected['access_token'];
+				}
+				if (!empty($selected['instagram_business_account']['id'])) {
+					$updates['ig_user_id'] = (string)$selected['instagram_business_account']['id'];
+				}
+			}
+		}
+
+		$message = 'Connexion Meta réussie. Token longue durée généré.';
+		if ($expires_at > 0) {
+			$message .= ' Expire le ' . wp_date('Y-m-d H:i', $expires_at) . '.';
+		}
+		if (!empty($updates['fb_page_id'])) {
+			$message .= ' Page Facebook détectée.';
+		}
+		if (!empty($updates['ig_user_id'])) {
+			$message .= ' Compte Instagram détecté.';
+		}
+		$updates['last_meta_token_message'] = $message;
+		self::update_options($updates);
+
+		wp_safe_redirect(self::settings_url(['network' => 'facebook']));
+		exit;
+	}
+
 	public static function handle_test_post(): void {
 		if (!current_user_can('manage_options')) {
 			wp_die('Forbidden');
@@ -3445,13 +3798,15 @@ final class PKLIAP_Plugin {
 
 		$node_id = 'pkliap-alerts';
 		$count = count($alerts);
-		$label = '<span class="pkliap-adminbar-label">Social</span><span class="pkliap-badge">' . $count . '</span><span class="screen-reader-text">' . esc_html($count . ' alerte' . ($count > 1 ? 's' : '') . ' SocialSharing') . '</span>';
+		$alert_text = $count . ' alerte' . ($count > 1 ? 's' : '');
+		$label = '<span class="pkliap-adminbar-label">Partages</span><span class="pkliap-badge" aria-hidden="true">' . esc_html((string)$count) . '</span>';
 		$admin_bar->add_node([
 			'id' => $node_id,
 			'title' => $label,
 			'href' => self::settings_url(),
 			'meta' => [
-				'title' => $count . ' alerte' . ($count > 1 ? 's' : '') . ' SocialSharing: ' . implode(' | ', $alerts),
+				'title' => $alert_text . ' SocialSharing: ' . implode(' | ', $alerts),
+				'aria-label' => 'SocialSharing: ' . $alert_text,
 			],
 		]);
 
@@ -3463,9 +3818,21 @@ final class PKLIAP_Plugin {
 		echo '<style>
 			#wp-admin-bar-pkliap-alerts > a.ab-item{
 				padding:0 7px !important;
+				display:inline-flex !important;
+				align-items:center !important;
+				justify-content:center !important;
+				gap:4px !important;
+				height:32px !important;
+				line-height:32px !important;
+				overflow:hidden !important;
+				color:#fff !important;
 			}
 			#wp-admin-bar-pkliap-alerts > a.ab-item .pkliap-adminbar-label{
+				color:#fff !important;
 				font-size:12px;
+				font-weight:600;
+				line-height:1;
+				flex:0 0 auto;
 			}
 			#wp-admin-bar-pkliap-alerts > a.ab-item .pkliap-badge{
 				display:inline-flex;
@@ -3473,7 +3840,7 @@ final class PKLIAP_Plugin {
 				justify-content:center;
 				min-width:15px;
 				height:15px;
-				margin-left:4px;
+				margin:0 0 0 1px;
 				padding:0 4px;
 				border-radius:999px;
 				background:#ef4444;
@@ -3482,6 +3849,7 @@ final class PKLIAP_Plugin {
 				font-weight:700;
 				line-height:1;
 				vertical-align:middle;
+				flex:0 0 auto;
 			}
 		</style>';
 	}
@@ -4208,6 +4576,50 @@ final class PKLIAP_Plugin {
 			return '';
 		}
 		return 'https://www.linkedin.com/feed/update/' . rawurlencode($urn) . '/';
+	}
+
+	private static function network_tab_status(string $net, bool $enabled, bool $connected, string $error): array {
+		return self::network_mode_status($net, $enabled, $connected, $error);
+	}
+
+	private static function network_connection_status(string $net, bool $connected, string $error): array {
+		$error = trim($error);
+		if ($connected && ($error === '' || ($net === 'x' && self::is_x_credits_error($error)))) {
+			return ['tone' => 'ok', 'label' => 'Connecté'];
+		}
+		if ($connected) {
+			return ['tone' => 'bad', 'label' => 'Erreur'];
+		}
+		return ['tone' => 'bad', 'label' => 'Déconnecté'];
+	}
+
+	private static function network_mode_status(string $net, bool $enabled, bool $connected, string $error): array {
+		$error = trim($error);
+		if (!$connected) {
+			return ['tone' => 'bad', 'label' => 'Off'];
+		}
+		if ($net === 'x' && self::is_x_credits_error($error)) {
+			return ['tone' => 'warn', 'label' => 'Manuel'];
+		}
+		if ($error !== '') {
+			return ['tone' => 'bad', 'label' => 'Bloqué'];
+		}
+		if ($enabled) {
+			return ['tone' => 'ok', 'label' => 'Auto'];
+		}
+		return ['tone' => 'warn', 'label' => 'Manuel'];
+	}
+
+	private static function network_icon_color(string $key): string {
+		$colors = [
+			'linkedin' => '#0a66c2',
+			'x' => '#111111',
+			'facebook' => '#1877f2',
+			'instagram' => '#e4405f',
+			'threads' => '#111111',
+			'medium' => '#00ab6c',
+		];
+		return $colors[$key] ?? '#64748b';
 	}
 
 	private static function build_post_share_status_items(int $post_id): array {
@@ -4986,6 +5398,59 @@ final class PKLIAP_Plugin {
 			'code' => $code,
 			'body' => is_array($body) ? $body : [],
 		];
+	}
+
+	/** @return array|WP_Error */
+	private static function meta_exchange_long_lived_token(string $app_id, string $app_secret, string $short_token) {
+		$url = add_query_arg([
+			'grant_type' => 'fb_exchange_token',
+			'client_id' => $app_id,
+			'client_secret' => $app_secret,
+			'fb_exchange_token' => $short_token,
+		], 'https://graph.facebook.com/v23.0/oauth/access_token');
+
+		$res = wp_remote_get($url, [
+			'timeout' => 45,
+		]);
+		if (is_wp_error($res)) {
+			return $res;
+		}
+		$code = (int)wp_remote_retrieve_response_code($res);
+		$raw_body = (string)wp_remote_retrieve_body($res);
+		$body = json_decode($raw_body, true);
+		if ($code < 200 || $code >= 300) {
+			$msg = 'Meta: échange token longue durée impossible (HTTP ' . $code . ').';
+			if (is_array($body) && !empty($body['error']['message'])) {
+				$msg .= ' ' . (string)$body['error']['message'];
+			}
+			return new WP_Error('pkliap_meta_token_exchange', $msg);
+		}
+		if (!is_array($body) || empty($body['access_token'])) {
+			return new WP_Error('pkliap_meta_token_exchange', 'Meta: réponse token longue durée invalide.');
+		}
+		return $body;
+	}
+
+	private static function select_meta_page(array $pages, string $preferred_page_id): array {
+		foreach ($pages as $page) {
+			if (!is_array($page)) {
+				continue;
+			}
+			if ($preferred_page_id !== '' && (string)($page['id'] ?? '') === $preferred_page_id) {
+				return $page;
+			}
+		}
+		foreach ($pages as $page) {
+			if (is_array($page) && !empty($page['instagram_business_account']['id'])) {
+				return $page;
+			}
+		}
+		foreach ($pages as $page) {
+			if (is_array($page)) {
+				return $page;
+			}
+		}
+		return [];
 	}
 
 	/** @return array|WP_Error */

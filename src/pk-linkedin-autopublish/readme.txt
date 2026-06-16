@@ -4,7 +4,7 @@ Tags: linkedin, facebook, instagram, threads, medium, x, twitter, social, autopu
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.80
+Stable tag: 1.1.0
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram, Threads et Medium lors de la publication.
@@ -43,6 +43,45 @@ Fonctionnalites :
 * Medium necessite un integration token disponible dans les reglages Medium du compte.
 
 == Changelog ==
+
+= 0.91 =
+* Ajout d'un flux Meta pour convertir un token Graph Explorer court en token longue duree
+* Remplissage automatique des credentials Facebook/Instagram depuis `me/accounts`
+
+= 0.90 =
+* Barre admin: suppression de l'icone et retour a un libelle texte Partages avec badge
+
+= 0.89 =
+* Barre admin: remplacement du pictogramme par une icone share blanche plus lisible
+
+= 0.88 =
+* Onglet Dashboard simplifie: suppression du libelle Aujourd'hui
+
+= 0.87 =
+* Recap dashboard: separation du statut Connexion et du mode Auto/Manuel
+* X sans credits API est affiche Connecte mais en mode Manuel
+
+= 0.86 =
+* Barre admin: suppression du texte visible parasite et alignement strict icone + badge
+
+= 0.85 =
+* Onglets reseaux: remplacement des versions V1/V2 par des pastilles de statut
+* Recap dashboard: icones reseaux et statut unique Auto, Manuel, Erreur ou Deconnecte
+
+= 0.84 =
+* Dashboard: ajout des images mises en avant dans les articles du jour
+* Dashboard: inclusion des articles planifies aujourd'hui en plus des articles publies
+
+= 0.83 =
+* Dashboard simplifie: suppression des blocs Statut des connexions et Dernieres erreurs
+* Ajout du tableau des articles publies aujourd'hui avec statut par reseau
+* Barre admin: icone et badge recentres et contrastes
+
+= 0.82 =
+* Barre admin remplace le texte Partages par l'icone `pi pi-share-alt` avec badge numerique
+
+= 0.81 =
+* Libelle de la barre admin clarifie: Partages + nombre d'alertes explicite
 
 = 0.80 =
 * Colonne Partages deplacee a droite apres Date
