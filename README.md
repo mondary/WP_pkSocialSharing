@@ -76,6 +76,8 @@ src/pk-linkedin-autopublish/
 
 Le nom du dossier reste `pk-linkedin-autopublish` pour compatibilité avec les installations existantes, mais le plugin affiché dans WordPress s’appelle désormais `PK SocialSharing`.
 
+Les archives zip ne doivent pas être stockées dans `extension/`. Le seul emplacement de sortie pour les packages générés est `build/releases/`, ignoré par Git.
+
 Pour générer un zip de première soumission WordPress.org :
 
 ```bash
