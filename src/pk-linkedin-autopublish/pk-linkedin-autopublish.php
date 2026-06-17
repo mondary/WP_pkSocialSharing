@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.1.3
+ * Version: 1.1.4
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -1374,13 +1374,13 @@ final class PKLIAP_Plugin {
 							<div class="pks-card-title">Test X</div>
 							<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié. <strong>Publier maintenant</strong> utilise l’API X et nécessite des crédits. <strong>Publier via navigateur</strong> ouvre X avec le texte prérempli et ne consomme pas de crédits API.</p>
 							<?php
-							$x_test_limit = max(20, absint($_GET[‘test_limit_x’] ?? 0) ?: 20);
+							$x_test_limit = max(20, absint($_GET['test_limit_x'] ?? 0) ?: 20);
 							$posts = get_posts([
-								‘post_type’ => $opt[‘post_type_whitelist’],
-								‘post_status’ => ‘publish’,
-								‘numberposts’ => $x_test_limit,
-								‘orderby’ => ‘date’,
-								‘order’ => ‘DESC’,
+								'post_type' => $opt['post_type_whitelist'],
+								'post_status' => 'publish',
+								'numberposts' => $x_test_limit,
+								'orderby' => 'date',
+								'order' => 'DESC',
 							]);
 							?>
 							<table class="widefat striped" style="width:100%;">
