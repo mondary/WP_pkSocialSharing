@@ -110,6 +110,7 @@ Live update:
 
 ## 🧾 Changelog
 
+- `1.1.5`: added a front-end Open Graph fallback to restore LinkedIn previews on allowed posts.
 - `1.1.4`: fixed the Test X admin block so the published posts list renders again.
 - `1.1.3`: added GPL license fields to the main plugin header for WordPress.org validation.
 - `1.1.2`: public rename to `PK SocialSharing` to comply with WordPress.org plugin-name rules.

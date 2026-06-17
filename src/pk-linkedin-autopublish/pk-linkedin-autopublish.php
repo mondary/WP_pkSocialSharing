@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.1.4
+ * Version: 1.1.5
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -51,6 +51,7 @@ final class PKLIAP_Plugin {
 		add_action('admin_bar_menu', [__CLASS__, 'admin_bar_menu'], 100);
 		add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_plugins_icon']);
 		add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_admin_list_styles']);
+		add_action('wp_head', [__CLASS__, 'output_frontend_opengraph_tags'], 5);
 		if (defined('PKLIAP_ENABLE_SYNC_ROUTES') && PKLIAP_ENABLE_SYNC_ROUTES) {
 			add_action('rest_api_init', [__CLASS__, 'register_rest_routes']);
 		}
@@ -159,6 +160,79 @@ final class PKLIAP_Plugin {
 			.pkliap-share-icon code{display:none}
 			@media screen and (max-width:782px){.column-pkliap_share_status{width:auto}.pkliap-share-list{max-width:none}}
 		');
+	}
+
+	public static function output_frontend_opengraph_tags(): void {
+		if (is_admin() || wp_doing_ajax() || wp_doing_cron() || !is_singular()) {
+			return;
+		}
+
+		$post_id = (int)get_queried_object_id();
+		if ($post_id <= 0) {
+			return;
+		}
+
+		$post = get_post($post_id);
+		if (!$post || $post->post_status !== 'publish') {
+			return;
+		}
+
+		if (!self::should_output_og_tags_for_post_type((string)$post->post_type)) {
+			return;
+		}
+
+		if (self::known_seo_plugin_outputs_og_tags()) {
+			return;
+		}
+
+		$url = get_permalink($post_id);
+		if (!$url) {
+			return;
+		}
+
+		$title = wp_strip_all_tags(get_the_title($post_id));
+		$description = self::safe_excerpt($post_id, 180);
+		if ($description === '') {
+			$description = wp_strip_all_tags(get_bloginfo('description'));
+		}
+			$image = '';
+			$image_id = get_post_thumbnail_id($post_id);
+			if ($image_id) {
+				$image = (string)wp_get_attachment_image_url($image_id, 'full');
+			}
+
+			echo "\n" . '<meta property="og:type" content="article" />' . "\n";
+		echo '<meta property="og:title" content="' . esc_attr($title) . '" />' . "\n";
+		echo '<meta property="og:description" content="' . esc_attr($description) . '" />' . "\n";
+		echo '<meta property="og:url" content="' . esc_url($url) . '" />' . "\n";
+		echo '<meta property="og:site_name" content="' . esc_attr(get_bloginfo('name')) . '" />' . "\n";
+		if ($image !== '') {
+			echo '<meta property="og:image" content="' . esc_url($image) . '" />' . "\n";
+		}
+		echo '<meta name="twitter:card" content="' . esc_attr($image !== '' ? 'summary_large_image' : 'summary') . '" />' . "\n";
+		echo '<meta name="twitter:title" content="' . esc_attr($title) . '" />' . "\n";
+		echo '<meta name="twitter:description" content="' . esc_attr($description) . '" />' . "\n";
+		if ($image !== '') {
+			echo '<meta name="twitter:image" content="' . esc_url($image) . '" />' . "\n";
+		}
+	}
+
+	private static function should_output_og_tags_for_post_type(string $post_type): bool {
+		$opt = self::get_options();
+		$whitelist = array_values(array_filter((array)($opt['post_type_whitelist'] ?? ['post'])));
+		if (!$whitelist) {
+			$whitelist = ['post'];
+		}
+
+		return in_array($post_type, $whitelist, true);
+	}
+
+	private static function known_seo_plugin_outputs_og_tags(): bool {
+		return defined('WPSEO_VERSION')
+			|| defined('RANK_MATH_VERSION')
+			|| defined('SEOPRESS_VERSION')
+			|| defined('AIOSEO_VERSION')
+			|| defined('THE_SEO_FRAMEWORK_VERSION');
 	}
 
 	public static function register_admin_columns(): void {

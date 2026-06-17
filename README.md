@@ -110,6 +110,7 @@ Mise à jour live :
 
 ## 🧾 Changelog
 
+- `1.1.5` : fallback Open Graph front-end pour restaurer les aperçus LinkedIn sur les articles autorisés.
 - `1.1.4` : correctif du bloc Test X dans l’admin pour restaurer la liste des articles publiés.
 - `1.1.3` : ajout de la licence GPL dans le header principal pour la validation WordPress.org.
 - `1.1.2` : renommage public en `PK SocialSharing` pour respecter les règles WordPress.org.
