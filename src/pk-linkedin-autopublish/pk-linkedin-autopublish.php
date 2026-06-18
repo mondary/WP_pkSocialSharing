@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.1.7
+ * Version: 1.1.8
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -4810,7 +4810,7 @@ final class PKLIAP_Plugin {
 		$params = [
 			'text' => $text,
 		];
-		if ($link !== '') {
+		if ($link !== '' && stripos($text, $link) === false) {
 			$params['url'] = $link;
 		}
 		return 'https://x.com/intent/tweet?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);

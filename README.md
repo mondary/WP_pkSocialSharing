@@ -110,6 +110,7 @@ Mise à jour live :
 
 ## 🧾 Changelog
 
+- `1.1.8` : partage X via navigateur sans doublon d’URL quand l’article est déjà inclus dans le texte.
 - `1.1.7` : partage X via navigateur avec URL de l’article dans l’intent pour restaurer l’unfurl Open Graph.
 - `1.1.6` : renommage du menu admin en `WP PK SocialSharing`.
 - `1.1.5` : fallback Open Graph front-end pour restaurer les aperçus LinkedIn sur les articles autorisés.

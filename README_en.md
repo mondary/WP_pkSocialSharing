@@ -110,6 +110,7 @@ Live update:
 
 ## 🧾 Changelog
 
+- `1.1.8`: X browser share avoids duplicate URLs when the article is already included in the text.
 - `1.1.7`: X browser share now includes the article URL in the intent to restore Open Graph unfurling.
 - `1.1.6`: renamed the admin menu to `WP PK SocialSharing`.
 - `1.1.5`: added a front-end Open Graph fallback to restore LinkedIn previews on allowed posts.
