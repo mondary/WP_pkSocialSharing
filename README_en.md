@@ -110,6 +110,8 @@ Live update:
 
 ## 🧾 Changelog
 
+- `1.1.7`: X browser share now includes the article URL in the intent to restore Open Graph unfurling.
+- `1.1.6`: renamed the admin menu to `WP PK SocialSharing`.
 - `1.1.5`: added a front-end Open Graph fallback to restore LinkedIn previews on allowed posts.
 - `1.1.4`: fixed the Test X admin block so the published posts list renders again.
 - `1.1.3`: added GPL license fields to the main plugin header for WordPress.org validation.

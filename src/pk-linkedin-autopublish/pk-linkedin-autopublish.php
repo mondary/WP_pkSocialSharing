@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.1.5
+ * Version: 1.1.7
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -712,15 +712,15 @@ final class PKLIAP_Plugin {
 
 	public static function admin_menu(): void {
 		add_menu_page(
-			'PK SocialSharing',
-			'PK SocialSharing',
+			'WP PK SocialSharing',
+			'WP PK SocialSharing',
 			'manage_options',
 			'pk-socialsharing',
 			[__CLASS__, 'render_settings_page']
 		);
 		add_submenu_page(
 			'pk-socialsharing',
-			'PK SocialSharing',
+			'WP PK SocialSharing',
 			'Réglages',
 			'manage_options',
 			'pk-socialsharing',
@@ -4807,7 +4807,13 @@ final class PKLIAP_Plugin {
 	private static function build_x_intent_url(int $post_id, array $opt): string {
 		$link = self::get_post_link($post_id, $opt);
 		$text = self::build_x_text($post_id, $opt, $link);
-		return 'https://x.com/intent/tweet?text=' . rawurlencode($text);
+		$params = [
+			'text' => $text,
+		];
+		if ($link !== '') {
+			$params['url'] = $link;
+		}
+		return 'https://x.com/intent/tweet?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
 	}
 
 	private static function build_facebook_text(int $post_id, array $opt, string $link): string {
