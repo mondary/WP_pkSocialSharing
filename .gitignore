@@ -4,3 +4,4 @@ extension/*.zip
 extension/release/
 build/
 .vscode/
+tools/runner/node_modules/

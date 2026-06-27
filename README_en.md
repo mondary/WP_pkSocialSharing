@@ -18,6 +18,7 @@
 - WP-CLI fallback to retry shares without relying on WP-Cron.
 - Centralized Meta setup: OAuth connection, long-lived token, Facebook Page and Instagram account detection.
 - X publishing through the API or browser fallback when API credits are not available.
+- X browser runner (CDP): token-authenticated REST queue + daily cap, automatable via a local `launchd`/`systemd` cron on your machine (zero API credits, human fingerprint). See [`tools/runner/`](tools/runner/README.md).
 
 ## 🧠 Usage
 
@@ -34,7 +35,7 @@ Automatic sharing runs when the post switches to `publish`. Already-published po
 - `Dashboard`: overview of scheduled/published posts and per-network status.
 - `Day`: daily publication tracking.
 - `LinkedIn`: LinkedIn OAuth, profile or organization Author URN, visibility, message format.
-- `X (Twitter)`: API keys, automatic mode when API credits are available, manual browser mode otherwise.
+- `X (Twitter)`: API keys, automatic mode when API credits are available, manual browser mode otherwise, or an external CDP runner (token + daily cap) for credit-free automation.
 - `Facebook`: Page ID, Page Access Token, Page publishing with featured image when available.
 - `Instagram`: IG User ID, Access Token, publishing through the Instagram Graph API.
 - `Threads`: Threads User ID, Access Token, publishing through the Threads API.
@@ -110,6 +111,7 @@ Live update:
 
 ## 🧾 Changelog
 
+- `1.1.9`: X browser runner — token-authenticated REST queue + daily cap to automate X sharing via a local cron on your Mac without API credits.
 - `1.1.8`: X browser share avoids duplicate URLs when the article is already included in the text.
 - `1.1.7`: X browser share now includes the article URL in the intent to restore Open Graph unfurling.
 - `1.1.6`: renamed the admin menu to `WP PK SocialSharing`.
@@ -129,4 +131,5 @@ Live update:
 ## 🔗 Links
 
 - FR README: [README.md](README.md)
+- X browser runner (CDP): [tools/runner/README.md](tools/runner/README.md)
 - Plugin source: [src/pk-linkedin-autopublish](src/pk-linkedin-autopublish)

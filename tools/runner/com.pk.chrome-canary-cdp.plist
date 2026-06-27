@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pk.chrome-canary-cdp</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary</string>
+        <string>--remote-debugging-port=9222</string>
+        <string>--user-data-dir=/Users/clm/Library/Application Support/Google/Chrome Canary/PK-Runner</string>
+        <string>--no-first-run</string>
+        <string>--no-default-browser-check</string>
+        <string>--disable-features=Translate</string>
+        <string>--window-position=-32000,-32000</string>
+        <string>--window-size=1,1</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/pk-canary.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/pk-canary.err.log</string>
+</dict>
+</plist>

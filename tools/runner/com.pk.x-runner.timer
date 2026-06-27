@@ -1,0 +1,11 @@
+[Unit]
+Description=Declencheur periodique du PK X Runner
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

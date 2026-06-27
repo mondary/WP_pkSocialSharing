@@ -1,0 +1,9 @@
+{
+  "wp_url": "https://exemple.com",
+  "runner_token": "colle-ici-ton-token-runner",
+  "browser_url": "http://127.0.0.1:9222",
+  "autoclick_override": null,
+  "human_delay_ms_min": 1500,
+  "human_delay_ms_max": 4000,
+  "click_timeout_ms": 12000
+}

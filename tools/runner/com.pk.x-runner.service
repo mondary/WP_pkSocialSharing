@@ -1,0 +1,13 @@
+[Unit]
+Description=PK X Runner (CDP, partage X sans credits API)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+Environment=PK_RUNNER_CONF=/etc/pk-x-runner/config.json
+Environment=PK_RUNNER_LOG=/var/log/pk-x-runner.log
+WorkingDirectory=__RUNNER_DIR__
+ExecStart=/usr/bin/node __RUNNER_DIR__/pk-x-runner.js
+TimeoutStartSec=120

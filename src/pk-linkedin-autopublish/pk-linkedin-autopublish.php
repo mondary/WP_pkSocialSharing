@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.1.8
+ * Version: 1.1.9
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -28,6 +28,7 @@ final class PKLIAP_Plugin {
 	const META_SHARE_URN = '_pkliap_linkedin_urn';
 	const META_X_SHARED_AT = '_pkliap_x_shared_at';
 	const META_X_POST_ID = '_pkliap_x_post_id';
+	const META_X_BROWSER_CLAIMED_AT = '_pkliap_x_browser_claimed_at';
 	const META_FB_SHARED_AT = '_pkliap_fb_shared_at';
 	const META_FB_POST_ID = '_pkliap_fb_post_id';
 	const META_IG_SHARED_AT = '_pkliap_ig_shared_at';
@@ -55,6 +56,9 @@ final class PKLIAP_Plugin {
 		if (defined('PKLIAP_ENABLE_SYNC_ROUTES') && PKLIAP_ENABLE_SYNC_ROUTES) {
 			add_action('rest_api_init', [__CLASS__, 'register_rest_routes']);
 		}
+		// Les routes x-browser ont leur propre authentification (token + option) et
+		// n'écrivent aucun fichier: elles s'enregistrent toujours, sans PKLIAP_ENABLE_SYNC_ROUTES.
+		add_action('rest_api_init', [__CLASS__, 'register_x_browser_routes']);
 		add_filter('cron_schedules', [__CLASS__, 'cron_schedules']);
 		add_action('init', [__CLASS__, 'maybe_schedule_retry_cron']);
 
@@ -71,6 +75,7 @@ final class PKLIAP_Plugin {
 		add_action('admin_post_pkliap_x_oauth_callback', [__CLASS__, 'handle_x_oauth_callback']);
 		add_action('admin_post_pkliap_x_disconnect', [__CLASS__, 'handle_x_disconnect']);
 		add_action('admin_post_pkliap_x_check', [__CLASS__, 'handle_x_check']);
+		add_action('admin_post_pkliap_x_browser_generate_token', [__CLASS__, 'handle_x_browser_generate_token']);
 		add_action('admin_post_pkliap_clear_network_error', [__CLASS__, 'handle_clear_network_error']);
 		add_action('admin_post_pkliap_meta_connect', [__CLASS__, 'handle_meta_connect']);
 		add_action('admin_post_pkliap_meta_oauth_callback', [__CLASS__, 'handle_meta_oauth_callback']);
@@ -429,6 +434,171 @@ final class PKLIAP_Plugin {
 		]);
 	}
 
+	public static function register_x_browser_routes(): void {
+		register_rest_route(self::SYNC_NAMESPACE, '/x-browser/next', [
+			'methods' => 'GET',
+			'permission_callback' => [__CLASS__, 'x_browser_rest_check'],
+			'callback' => [__CLASS__, 'rest_x_browser_next'],
+		]);
+		register_rest_route(self::SYNC_NAMESPACE, '/x-browser/done', [
+			'methods' => 'POST',
+			'permission_callback' => [__CLASS__, 'x_browser_rest_check'],
+			'callback' => [__CLASS__, 'rest_x_browser_done'],
+		]);
+		register_rest_route(self::SYNC_NAMESPACE, '/x-browser/release', [
+			'methods' => 'POST',
+			'permission_callback' => [__CLASS__, 'x_browser_rest_check'],
+			'callback' => [__CLASS__, 'rest_x_browser_release'],
+		]);
+		register_rest_route(self::SYNC_NAMESPACE, '/x-browser/status', [
+			'methods' => 'GET',
+			'permission_callback' => [__CLASS__, 'x_browser_rest_check'],
+			'callback' => [__CLASS__, 'rest_x_browser_status'],
+		]);
+	}
+
+	public static function x_browser_rest_check(WP_REST_Request $request): bool {
+		$opt = self::get_options();
+		if (empty($opt['x_browser_enabled'])) {
+			return false;
+		}
+		$token = (string)$opt['x_browser_runner_token'];
+		if ($token === '') {
+			return false;
+		}
+		$sent = (string)$request->get_header('x_pk_runner_token');
+		return $sent !== '' && hash_equals($token, $sent);
+	}
+
+	public static function rest_x_browser_next(WP_REST_Request $request): WP_REST_Response {
+		$opt = self::get_options();
+		if (self::x_browser_daily_count($opt) >= (int)$opt['x_browser_daily_cap']) {
+			self::x_browser_record_run('daily_cap_reached');
+			return new WP_REST_Response(['empty' => true, 'reason' => 'daily_cap'], 200);
+		}
+
+		$post_types = array_values(array_filter((array)($opt['post_type_whitelist'] ?? [])));
+		if (!$post_types) {
+			$post_types = ['post'];
+		}
+		$claim_ttl = 15 * MINUTE_IN_SECONDS;
+
+		// Libère les claims expirés avant de chercher.
+		$q = new WP_Query([
+			'post_type' => $post_types,
+			'post_status' => 'publish',
+			'fields' => 'ids',
+			'posts_per_page' => 50,
+			'orderby' => 'date',
+			'order' => 'DESC',
+			'no_found_rows' => true,
+			'meta_query' => [
+				'relation' => 'OR',
+				[
+					'key' => self::META_X_SHARED_AT,
+					'compare' => 'NOT EXISTS',
+				],
+				[
+					'key' => self::META_X_SHARED_AT,
+					'value' => '0',
+					'compare' => '<=',
+				],
+			],
+		]);
+
+		$post_ids = is_array($q->posts) ? array_map('intval', $q->posts) : [];
+		$chosen = 0;
+		$now = time();
+		foreach ($post_ids as $pid) {
+			$claimed = (int)get_post_meta($pid, self::META_X_BROWSER_CLAIMED_AT, true);
+			if ($claimed > 0 && ($now - $claimed) < $claim_ttl) {
+				continue;
+			}
+			$chosen = $pid;
+			break;
+		}
+		if (!$chosen) {
+			self::x_browser_record_run('queue_empty');
+			return new WP_REST_Response(['empty' => true, 'reason' => 'queue_empty'], 200);
+		}
+
+		update_post_meta($chosen, self::META_X_BROWSER_CLAIMED_AT, $now);
+		$link = self::get_post_link($chosen, $opt);
+		self::x_browser_record_run('claimed');
+
+		return new WP_REST_Response([
+			'empty' => false,
+			'post_id' => $chosen,
+			'title' => wp_strip_all_tags(get_the_title($chosen)),
+			'link' => $link,
+			'intent_url' => self::build_x_intent_url($chosen, $opt),
+			'autoclick' => !empty($opt['x_browser_autoclick']),
+		], 200);
+	}
+
+	public static function rest_x_browser_done(WP_REST_Request $request): WP_REST_Response {
+		$post_id = (int)$request->get_param('post_id');
+		$x_post_id = sanitize_text_field((string)$request->get_param('x_post_id'));
+		if (!$post_id) {
+			return new WP_REST_Response(['error' => 'post_id manquant'], 400);
+		}
+		update_post_meta($post_id, self::META_X_SHARED_AT, time());
+		delete_post_meta($post_id, self::META_X_BROWSER_CLAIMED_AT);
+		if ($x_post_id !== '') {
+			update_post_meta($post_id, self::META_X_POST_ID, $x_post_id);
+		}
+		self::x_browser_increment_daily();
+		self::x_browser_record_run('done');
+		self::debug_log_event("X browser share done for post #$post_id.");
+		return new WP_REST_Response(['ok' => true], 200);
+	}
+
+	public static function rest_x_browser_release(WP_REST_Request $request): WP_REST_Response {
+		$post_id = (int)$request->get_param('post_id');
+		if (!$post_id) {
+			return new WP_REST_Response(['error' => 'post_id manquant'], 400);
+		}
+		delete_post_meta($post_id, self::META_X_BROWSER_CLAIMED_AT);
+		self::x_browser_record_run('released');
+		return new WP_REST_Response(['ok' => true], 200);
+	}
+
+	public static function rest_x_browser_status(WP_REST_Request $request): WP_REST_Response {
+		$opt = self::get_options();
+		return new WP_REST_Response([
+			'enabled' => !empty($opt['x_browser_enabled']),
+			'daily_cap' => (int)$opt['x_browser_daily_cap'],
+			'shared_today' => self::x_browser_daily_count($opt),
+			'last_run_at' => (int)$opt['x_browser_last_run_at'],
+			'last_status' => (string)$opt['x_browser_last_status'],
+		], 200);
+	}
+
+	private static function x_browser_daily_count(array $opt): int {
+		$today = wp_date('Y-m-d');
+		if ((string)$opt['x_browser_shared_today_date'] !== $today) {
+			return 0;
+		}
+		return (int)$opt['x_browser_shared_today_count'];
+	}
+
+	private static function x_browser_increment_daily(): void {
+		$opt = self::get_options();
+		$today = wp_date('Y-m-d');
+		$count = ((string)$opt['x_browser_shared_today_date'] === $today) ? (int)$opt['x_browser_shared_today_count'] : 0;
+		self::update_options([
+			'x_browser_shared_today_count' => $count + 1,
+			'x_browser_shared_today_date' => $today,
+		]);
+	}
+
+	private static function x_browser_record_run(string $status): void {
+		self::update_options([
+			'x_browser_last_run_at' => time(),
+			'x_browser_last_status' => $status,
+		]);
+	}
+
 	public static function rest_manifest(WP_REST_Request $request): WP_REST_Response {
 		$base_dir = plugin_dir_path(__FILE__);
 		$files = self::sync_collect_files($base_dir);
@@ -633,10 +803,18 @@ final class PKLIAP_Plugin {
 			'x_include_url' => 1,
 			'x_content_order' => '',
 			'x_text_template' => '',
-			'last_x_error' => '',
-			'last_x_error_at' => 0,
-			'last_x_check_message' => '',
-			'last_x_check_at' => 0,
+		'last_x_error' => '',
+		'last_x_error_at' => 0,
+		'last_x_check_message' => '',
+		'last_x_check_at' => 0,
+		'x_browser_enabled' => 0,
+		'x_browser_runner_token' => '',
+		'x_browser_daily_cap' => 5,
+		'x_browser_autoclick' => 1,
+		'x_browser_last_run_at' => 0,
+		'x_browser_last_status' => '',
+		'x_browser_shared_today_count' => 0,
+		'x_browser_shared_today_date' => '',
 			'meta_app_id' => '',
 			'meta_app_secret' => '',
 			'meta_user_access_token' => '',
@@ -804,6 +982,15 @@ final class PKLIAP_Plugin {
 			$out['x_content_order'] = ($current_x_order === '') ? '' : self::normalize_content_order($current_x_order);
 		}
 		$out['x_text_template'] = array_key_exists('x_text_template', $value) ? sanitize_textarea_field((string)$value['x_text_template']) : (string)$current['x_text_template'];
+		$out['x_browser_enabled'] = array_key_exists('x_browser_enabled', $value) ? (empty($value['x_browser_enabled']) ? 0 : 1) : (int)$current['x_browser_enabled'];
+		$out['x_browser_runner_token'] = array_key_exists('x_browser_runner_token', $value) ? preg_replace('/[^a-zA-Z0-9]/', '', (string)$value['x_browser_runner_token']) : (string)$current['x_browser_runner_token'];
+		$out['x_browser_daily_cap'] = array_key_exists('x_browser_daily_cap', $value) ? max(0, min(50, (int)$value['x_browser_daily_cap'])) : (int)$current['x_browser_daily_cap'];
+		$out['x_browser_autoclick'] = array_key_exists('x_browser_autoclick', $value) ? (empty($value['x_browser_autoclick']) ? 0 : 1) : (int)$current['x_browser_autoclick'];
+		// Champs pilotés par le runner, jamais éditables via le form: on conserve la valeur courante.
+		$out['x_browser_last_run_at'] = (int)$current['x_browser_last_run_at'];
+		$out['x_browser_last_status'] = (string)$current['x_browser_last_status'];
+		$out['x_browser_shared_today_count'] = (int)$current['x_browser_shared_today_count'];
+		$out['x_browser_shared_today_date'] = (string)$current['x_browser_shared_today_date'];
 		$out['meta_app_id'] = array_key_exists('meta_app_id', $value) ? sanitize_text_field((string)$value['meta_app_id']) : (string)$current['meta_app_id'];
 		$out['meta_app_secret'] = array_key_exists('meta_app_secret', $value) ? sanitize_text_field((string)$value['meta_app_secret']) : (string)$current['meta_app_secret'];
 		$out['meta_user_access_token'] = array_key_exists('meta_user_access_token', $value) ? sanitize_text_field((string)$value['meta_user_access_token']) : (string)$current['meta_user_access_token'];
@@ -1441,11 +1628,69 @@ final class PKLIAP_Plugin {
 									</div>
 								</div>
 							</div>
-							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
-						</form>
+						<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+					</form>
 
-						<div class="pks-card pks-card--wide">
-							<div class="pks-card-title">Test X</div>
+					<form method="post" action="options.php" class="pks-card pks-card--wide">
+						<div class="pks-card-title">Runner navigateur (sans crédits API)</div>
+						<?php settings_fields('pkliap'); ?>
+						<p class="pks-info" style="margin:0 0 12px;">Un runner local (Mac via <code>launchd</code>, ou Linux via <code>systemd</code>) interroge WordPress, récupère les articles en attente X, et les publie en pilotant <strong>ton vrai Chrome</strong> via CDP (Chrome DevTools Protocol) — fingerprint humain, zéro crédit API, zéro risque de ban automation. Voir <code>tools/runner/README.md</code>.</p>
+						<div class="pks-checkrow">
+							<span class="pks-pill pks-pill--ok">AUTO</span>
+							<div>
+								<strong>Activer le runner</strong>
+								<label class="pks-inline"><input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_browser_enabled]" value="0"/><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_browser_enabled]" value="1" <?php checked(1, (int)$opt['x_browser_enabled']); ?>/> Exposer la queue X aux scripts externes authentifiés par token</label>
+							</div>
+						</div>
+						<table class="form-table" role="presentation" style="margin-top:10px;">
+							<tr>
+								<th scope="row">Runner Token</th>
+								<td>
+									<input class="regular-text" type="text" readonly value="<?php echo esc_attr((string)$opt['x_browser_runner_token']); ?>" placeholder="— non généré —"/>
+									<a class="button" style="margin-left:6px;" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_x_browser_generate_token'), 'pkliap_x_browser_generate_token')); ?>">Générer / Régénérer</a>
+									<p class="description">À recopier dans la config du runner (<code>~/.config/pk-x-runner.json</code> sur Mac, <code>/etc/pk-x-runner/config.json</code> sur Linux).</p>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Plafond quotidien</th>
+								<td>
+									<input class="small-text" type="number" min="0" max="50" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_browser_daily_cap]" value="<?php echo esc_attr((int)$opt['x_browser_daily_cap']); ?>"/>
+									<span class="description">Nombre max de tweets auto-par jour via le runner. Protège contre un dérapage du cron.</span>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Clic auto</th>
+								<td>
+									<label class="pks-inline"><input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_browser_autoclick]" value="0"/><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_browser_autoclick]" value="1" <?php checked(1, (int)$opt['x_browser_autoclick']); ?>/> Le runner clique automatiquement sur le bouton Publier</label>
+									<p class="description">Si décoché, le runner ouvre l'onglet pré-rempli et tu cliques toi-même. Plus sûr si X montre parfois un captcha.</p>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">État</th>
+								<td>
+									<?php
+									$xbr_count = self::x_browser_daily_count($opt);
+									$xbr_last = (int)$opt['x_browser_last_run_at'];
+									$xbr_last_label = $xbr_last ? esc_html(wp_date('Y-m-d H:i', $xbr_last)) : 'jamais';
+									$xbr_last_status = (string)$opt['x_browser_last_status'];
+									?>
+									<span class="pks-pill <?php echo !empty($opt['x_browser_enabled']) ? 'pks-pill--ok' : 'pks-pill--mute'; ?>"><?php echo !empty($opt['x_browser_enabled']) ? 'ACTIF' : 'INACTIF'; ?></span>
+									<span style="margin-left:8px;">Aujourd'hui: <strong><?php echo (int)$xbr_count; ?></strong> / <?php echo (int)$opt['x_browser_daily_cap']; ?> — Dernier run: <?php echo $xbr_last_label; ?><?php echo $xbr_last_status !== '' ? ' (' . esc_html($xbr_last_status) . ')' : ''; ?></span>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row">Endpoint REST</th>
+								<td>
+									<code><?php echo esc_url(rest_url(self::SYNC_NAMESPACE . '/x-browser/next')); ?></code>
+									<p class="description">Le runner appelle cet endpoint avec le header <code>X-PK-Runner-Token</code>.</p>
+								</td>
+							</tr>
+						</table>
+						<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+					</form>
+
+					<div class="pks-card pks-card--wide">
+						<div class="pks-card-title">Test X</div>
 							<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié. <strong>Publier maintenant</strong> utilise l’API X et nécessite des crédits. <strong>Publier via navigateur</strong> ouvre X avec le texte prérempli et ne consomme pas de crédits API.</p>
 							<?php
 							$x_test_limit = max(20, absint($_GET['test_limit_x'] ?? 0) ?: 20);
@@ -3076,6 +3321,23 @@ final class PKLIAP_Plugin {
 		exit;
 	}
 
+	public static function handle_x_browser_generate_token(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_x_browser_generate_token');
+
+		try {
+			$token = bin2hex(random_bytes(24));
+		} catch (Throwable $e) {
+			$token = wp_generate_password(48, false, false);
+		}
+		self::update_options(['x_browser_runner_token' => $token]);
+		self::set_flash('notice', 'Token runner généré. Copie-le dans la config du script Mac.');
+		wp_safe_redirect(self::settings_url(['network' => 'x']));
+		exit;
+	}
+
 	public static function handle_x_check(): void {
 		if (!current_user_can('manage_options')) {
 			wp_die('Forbidden');
@@ -4167,6 +4429,11 @@ final class PKLIAP_Plugin {
 
 		$opt = self::get_options();
 		if (empty($opt['x_enabled']) && !$force) {
+			return ['skipped' => true];
+		}
+		// Runner navigateur actif: on diffère la publication au runner CDP, on évite
+		// l'échec API (credits) et la notification admin associée. Le manuel (force) passe encore par l'API.
+		if (!empty($opt['x_browser_enabled']) && !$force) {
 			return ['skipped' => true];
 		}
 		if (empty($opt['x_api_key']) || empty($opt['x_api_secret'])) {

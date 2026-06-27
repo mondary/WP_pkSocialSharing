@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pk.x-runner</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>__RUNNER_DIR__/pk-x-runner.js</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- 1 article partagé par créneau de publication, 5 min après l'heure.
+         5 fires/jour max = aligné sur le plafond quotidien du plugin. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Hour</key><integer>12</integer><integer>Minute</key><integer>5</integer></dict>
+        <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>5</integer></dict>
+    </array>
+
+    <!-- Rattrape un créneau manqué si le Mac dormait (déclenche au réveil). -->
+    <key>Persistent</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/pk-x-runner.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/pk-x-runner.err.log</string>
+</dict>
+</plist>

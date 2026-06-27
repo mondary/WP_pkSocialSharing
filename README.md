@@ -17,7 +17,8 @@
 - Retry WP-Cron toutes les 5 minutes pour les partages en attente.
 - Fallback WP-CLI pour relancer les publications sans dépendre de WP-Cron.
 - Configuration Meta centralisée : connexion OAuth, token longue durée, détection Page Facebook et compte Instagram.
-- Publication X via API ou fallback navigateur si les crédits API sont insuffisants.
+- Publication X via API, ou fallback navigateur si les crédits API sont insuffisants.
+- Runner navigateur X (CDP) : queue REST + token + plafond quotidien, automatisable via un cron `launchd`/`systemd` sur ta machine (zéro crédit API, fingerprint humain). Voir [`tools/runner/`](tools/runner/README.md).
 
 ## 🧠 Utilisation
 
@@ -34,7 +35,7 @@ Le partage automatique se déclenche au moment où l’article passe en statut `
 - `Dashboard` : vue synthétique des articles planifiés/publiés et de l’état par réseau.
 - `Jour` : suivi des publications du jour.
 - `LinkedIn` : OAuth LinkedIn, Author URN profil ou organisation, visibilité, format du message.
-- `X (Twitter)` : clés API, mode automatique si les crédits API sont disponibles, mode manuel via navigateur sinon.
+- `X (Twitter)` : clés API, mode automatique si les crédits API sont disponibles, mode manuel via navigateur sinon, ou runner CDP externe (token + plafond quotidien) pour une automatisation sans crédit.
 - `Facebook` : Page ID, Page Access Token, publication sur Page avec image mise en avant si disponible.
 - `Instagram` : IG User ID, Access Token, publication via Instagram Graph API.
 - `Threads` : Threads User ID, Access Token, publication via API Threads.
@@ -110,6 +111,7 @@ Mise à jour live :
 
 ## 🧾 Changelog
 
+- `1.1.9` : runner navigateur X — queue REST authentifiée par token + plafond quotidien, automatisable via un cron `launchd` sur ton Mac (zéro crédit API).
 - `1.1.8` : partage X via navigateur sans doublon d’URL quand l’article est déjà inclus dans le texte.
 - `1.1.7` : partage X via navigateur avec URL de l’article dans l’intent pour restaurer l’unfurl Open Graph.
 - `1.1.6` : renommage du menu admin en `WP PK SocialSharing`.
@@ -129,4 +131,5 @@ Mise à jour live :
 ## 🔗 Liens
 
 - EN README : [README_en.md](README_en.md)
+- Runner navigateur X (CDP) : [tools/runner/README.md](tools/runner/README.md)
 - Plugin source : [src/pk-linkedin-autopublish](src/pk-linkedin-autopublish)
