@@ -18,7 +18,7 @@
 - WP-CLI fallback to retry shares without relying on WP-Cron.
 - Centralized Meta setup: OAuth connection, long-lived token, Facebook Page and Instagram account detection.
 - X publishing through the API or browser fallback when API credits are not available.
-- X browser runner (CDP): token-authenticated REST queue + daily cap, automatable via a local `launchd`/`systemd` cron on your machine (zero API credits, human fingerprint). See [`tools/runner/`](tools/runner/README.md).
+- X browser runner (CDP): token-authenticated REST queue + daily cap, automatable via a local `launchd`/`systemd` cron on your machine (zero API credits, human fingerprint). Uses **Chrome Canary** as a dedicated browser that posts in the background without disrupting your main Chrome. See [`tools/runner/`](tools/runner/README.md).
 
 ## 🧠 Usage
 

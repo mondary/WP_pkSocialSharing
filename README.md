@@ -18,7 +18,7 @@
 - Fallback WP-CLI pour relancer les publications sans dépendre de WP-Cron.
 - Configuration Meta centralisée : connexion OAuth, token longue durée, détection Page Facebook et compte Instagram.
 - Publication X via API, ou fallback navigateur si les crédits API sont insuffisants.
-- Runner navigateur X (CDP) : queue REST + token + plafond quotidien, automatisable via un cron `launchd`/`systemd` sur ta machine (zéro crédit API, fingerprint humain). Voir [`tools/runner/`](tools/runner/README.md).
+- Runner navigateur X (CDP) : queue REST + token + plafond quotidien, automatisable via un cron `launchd`/`systemd` sur ta machine (zéro crédit API, fingerprint humain). Utilise **Chrome Canary** comme navigateur dédié pour publier en arrière-plan sans perturber ton Chrome principal. Voir [`tools/runner/`](tools/runner/README.md).
 
 ## 🧠 Utilisation
 

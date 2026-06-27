@@ -1,20 +1,32 @@
 # PK X Runner (CDP)
 
-Publie sur X **sans crédits API** en pilotant **ton vrai Chrome** via le Chrome
+Publie sur X **sans crédits API** en pilotant **ton vrai Chrome Canary** via le Chrome
 DevTools Protocol (CDP). Le navigateur est le tien → fingerprint humain → pas de
 ban. Même code sur macOS et Linux.
 
 ```
-WP plugin  ──GET /next──►  ce runner  ──CDP:9222──►  ton Chrome (session X)
-           ◄──POST /done──            ◄──clic tweet──
+WP plugin  ──GET /next──►  ce runner  ──CDP:9222──►  Chrome Canary (session X)
+            ◄──POST /done──            ◄──clic tweet──
 ```
+
+## Pourquoi Chrome Canary (et pas Chrome stable)
+
+**Canary est le navigateur dédié aux automatisations.** Binaire, profil et icône
+séparés de ton Chrome stable — tu peux donc **bosser normalement sur ton Chrome
+principal** pendant que le runner publie dans Canary : pas de vol de focus, pas de
+capture de curseur (la fenêtre Canary est poussée hors-champ).
+
+En bonus, Chrome stable interdit le pilotage CDP sur son profil par défaut, alors que
+Canary a son propre profil par défaut → CDP autorisé nativement.
+
+À installer une fois : `brew install --cask google-chrome@canary`.
 
 ## Pourquoi CDP et pas Playwright/Puppeteer classique
 
 - `puppeteer.launch()` démarre un Chromium automatisé → `navigator.webdriver`, fingerprint de build → **X détecte et bannit**.
-- `puppeteer-core.connect()` se **branche** sur ton Chrome déjà ouvert via CDP → **indistinguable d'un humain**.
+- `puppeteer-core.connect()` se **branche** sur ton Chrome Canary déjà ouvert via CDP → **indistinguable d'un humain**.
 
-On utilise `puppeteer-core` (pas `puppeteer`) : aucun Chromium téléchargé, il exige un Chrome lancé séparément.
+On utilise `puppeteer-core` (pas `puppeteer`) : aucun Chromium téléchargé, il exige un navigateur lancé séparément.
 
 ## Anti-doublon / anti-spam (géré côté plugin)
 
@@ -31,10 +43,11 @@ Donc zéro risque de double-post ou de rafale, même si le cron se déclenche de
 
 ## Setup macOS
 
-### 1. Installer Node.js + dépendances
+### 1. Installer Node.js + Chrome Canary + dépendances
 
 ```bash
 brew install node
+brew install --cask google-chrome@canary   # navigateur dédié à l'automatisation
 cd tools/runner
 npm install
 ```
@@ -56,20 +69,25 @@ $EDITOR ~/.config/pk-x-runner.json
 #   browser_url   = http://127.0.0.1:9222
 ```
 
-### 4. Lancer Chrome en mode pilotable (profil dédié)
+### 4. Lancer Chrome Canary en mode pilotable (1er lancement)
 
 ```bash
 chmod +x tools/runner/start-chrome-macos.sh
-./tools/runner/start-chrome-macos.sh
+PK_VISIBLE=1 ./tools/runner/start-chrome-macos.sh
 ```
 
-Une fenêtre Chrome s'ouvre (profil neuf). **Au premier lancement seulement** :
-connecte-toi à ton compte X (`x.com`) normalement dans cette fenêtre. Ferme-la.
-Les relances suivantes réutilisent automatiquement la session (cookies persistés
-dans `~/Library/Application Support/Google/Chrome/PK-CDP-Profile`).
+`start-chrome-macos.sh` lance **Google Chrome Canary** (pas Chrome stable) sur le
+port CDP 9222, avec un profil dédié `~/Library/Application Support/Google/Chrome Canary/PK-Runner`.
+`PK_VISIBLE=1` affiche la fenêtre le temps du login ; ensuite elle est poussée
+hors-champ automatiquement.
 
-> Le profil est **dédié** (séparé de ton Chrome principal) pour pouvoir tourner en
-> parallèle sans conflit, et pour être copiable sur Linux plus tard.
+Une fenêtre Canary s'ouvre (profil neuf). **Au premier lancement seulement** :
+connecte-toi à ton compte X (`x.com`) dans cette fenêtre, puis ferme-la. Les relances
+suivantes réutilisent la session (cookies persistés dans le profil Canary dédié).
+
+> Canary est séparé de ton Chrome principal : le runner publie en arrière-plan sans
+> te déranger pendant que tu bosses. Pour le lancer auto au démarrage, voir le plist
+> `com.pk.chrome-canary-cdp.plist` à l'étape 6.
 
 ### 5. Test manuel
 
@@ -81,20 +99,30 @@ tail -f ~/.local/log/pk-x-runner.log
 Si un article est en attente X : un nouvel onglet s'ouvre dans le Chrome dédié,
 le tweet est publié automatiquement, puis l'onglet se ferme.
 
-### 6. Automatiser avec launchd (toutes les 15 min)
+### 6. Automatiser avec launchd (Chrome Canary + runner)
+
+Deux plists à charger : (a) **Chrome Canary** en CDP persistant au login, (b) le
+**runner** qui déclenche aux heures de publication (10:05, 11:05, 12:05, 13:05, 14:05 —
+5 déclenchements/jour alignés sur le plafond du plugin).
 
 ```bash
+# (a) Chrome Canary toujours prêt sur le port 9222
+cp tools/runner/com.pk.chrome-canary-cdp.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.pk.chrome-canary-cdp.plist
+
+# (b) Le runner aux heures de publication
 RUNNER_DIR="$(pwd)/tools/runner"
 sed "s|__RUNNER_DIR__|$RUNNER_DIR|g" tools/runner/com.pk.x-runner.plist \
   > ~/Library/LaunchAgents/com.pk.x-runner.plist
-
 launchctl load ~/Library/LaunchAgents/com.pk.x-runner.plist
-launchctl list | grep com.pk.x-runner
+
+launchctl list | grep com.pk
 ```
 
 Arrêter :
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.pk.x-runner.plist
+launchctl unload ~/Library/LaunchAgents/com.pk.chrome-canary-cdp.plist
 ```
 
 > launchd ne déclenche le runner que si ton Mac est allumé. Le plugin garde la
@@ -225,7 +253,7 @@ Logs : `tail -f /var/log/pk-x-runner.log`
 
 | Symptôme | Cause / fix |
 |---|---|
-| `ERREUR CDP: Chrome CDP inaccessible` | Chrome/Chromium pas lancé, ou pas sur le port 9222. Lance `start-chrome-*.sh`. |
+| `ERREUR CDP: Chrome CDP inaccessible` | Chrome Canary pas lancé, ou pas sur le port 9222. Lance `start-chrome-macos.sh` (ou charge `com.pk.chrome-canary-cdp.plist`). |
 | `bouton tweet introuvable` | X a changé son DOM, ou tu n'es pas connecté (session X expirée). Rouvre Chrome, reconnecte-toi. |
 | `confirmation post absente` | Le tweet a peut-être été publié mais le signal n'est pas détecté. Vérifie ton compte X manuellement ; le claim est libéré donc le post ne sera pas retenté (anti-doublon). |
 | `403` sur `/next` | Runner désactivé dans WP, ou `runner_token` erroné. |
