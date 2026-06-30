@@ -18,7 +18,9 @@
     </dict>
 
     <!-- 1 article partagé par créneau de publication, 5 min après l'heure.
-         5 fires/jour max = aligné sur le plafond quotidien du plugin. -->
+         6 créneaux (10h→15h), plafond plugin = 5/jour → 1 créneau sans article.
+         Garde nocturne 20h-9h dans pk-x-runner.js (anti-détection).
+         Installe: cp ce plist vers ~/Library/LaunchAgents/ puis sed __RUNNER_DIR__. -->
     <key>StartCalendarInterval</key>
     <array>
         <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
@@ -26,6 +28,7 @@
         <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>5</integer></dict>
         <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>5</integer></dict>
         <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>5</integer></dict>
     </array>
 
     <!-- Rattrape un créneau manqué si le Mac dormait (déclenche au réveil). -->

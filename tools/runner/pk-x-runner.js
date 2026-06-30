@@ -4,6 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
+process.on('uncaughtException', e => { log(`UNCAUGHT: ${e.message}`); process.exit(9); });
+process.on('unhandledRejection', r => { log(`UNHANDLED REJECTION: ${r}`); process.exit(9); });
+
 const CONFIG_PATH = process.env.PK_RUNNER_CONF || path.join(process.env.HOME || '/root', '.config', 'pk-x-runner.json');
 const LOG_PATH = process.env.PK_RUNNER_LOG || path.join(process.env.HOME || '/root', '.local', 'log', 'pk-x-runner.log');
 const NAMESPACE = 'pksocialsharing/v1';
@@ -99,6 +102,14 @@ async function releaseAndExit(cfg, browser, page, postId, reason, code) {
 	const cfg = loadConfig();
 	for (const k of ['wp_url', 'runner_token', 'browser_url']) {
 		if (!cfg[k]) { log(`ERREUR: champ "${k}" manquant dans ${CONFIG_PATH}`); process.exit(2); }
+	}
+
+	const hour = new Date().getHours();
+	const pauseStart = 20;
+	const pauseEnd = 9;
+	if (hour < pauseEnd || hour >= pauseStart) {
+		log(`PAUSE NOCTURNE (${hour}h) — hors fenêtre ${pauseEnd}h-${pauseStart}h.`);
+		process.exit(0);
 	}
 
 	let browser;
