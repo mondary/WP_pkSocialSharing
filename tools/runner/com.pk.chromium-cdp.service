@@ -1,0 +1,16 @@
+[Unit]
+Description=Chromium headful (Xvfb + CDP) pour PK X Runner
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Environment=PK_CHROME_PROFILE=/var/lib/x-runner/profile
+Environment=PK_CDP_PORT=9222
+ExecStart=__RUNNER_DIR__/start-chromium-linux.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

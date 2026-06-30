@@ -2,6 +2,7 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const CONFIG_PATH = process.env.PK_RUNNER_CONF || path.join(process.env.HOME || '/root', '.config', 'pk-x-runner.json');
 const LOG_PATH = process.env.PK_RUNNER_LOG || path.join(process.env.HOME || '/root', '.local', 'log', 'pk-x-runner.log');
@@ -55,6 +56,23 @@ async function wpCall(cfg, method, route, body) {
 	return { ok: res.ok, status: res.status, data };
 }
 
+async function ensureCanary(cfg) {
+	const base = cfg.browser_url.replace(/\/$/, '');
+	try { await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(3000) }); return; } catch (_) {}
+	const startScript = process.platform === 'darwin' ? 'start-chrome-macos.sh' : 'start-chromium-linux.sh';
+	log(`Navigateur down — démarrage via ${startScript}...`);
+	const script = path.join(__dirname, startScript);
+	if (!fs.existsSync(script)) { log(`ERREUR: ${script} introuvable`); process.exit(3); }
+	spawn(script, [], { detached: true, stdio: 'ignore', env: { ...process.env } }).unref();
+	for (let i = 0; i < 30; i++) {
+		await sleep(1000);
+		try { await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(2000) }); log('Navigateur démarré.'); return; }
+		catch (_) {}
+	}
+	log(`ERREUR: le navigateur n'a pas démarré sur le port CDP. Lance-le: ./${startScript}`);
+	process.exit(3);
+}
+
 async function connectBrowser(cfg) {
 	const base = cfg.browser_url.replace(/\/$/, '');
 	let wsEndpoint;
@@ -85,6 +103,7 @@ async function releaseAndExit(cfg, browser, page, postId, reason, code) {
 
 	let browser;
 	try {
+		await ensureCanary(cfg);
 		browser = await connectBrowser(cfg);
 	} catch (e) {
 		log(`ERREUR CDP: ${e.message}`);

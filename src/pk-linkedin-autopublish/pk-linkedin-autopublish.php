@@ -4138,21 +4138,22 @@ final class PKLIAP_Plugin {
 		}
 
 		$alerts = self::collect_pending_alerts(self::get_options());
-		if (!$alerts) {
-			return;
-		}
+		$count = $alerts ? count($alerts) : 0;
 
-		$node_id = 'pkliap-alerts';
-		$count = count($alerts);
-		$alert_text = $count . ' alerte' . ($count > 1 ? 's' : '');
-		$label = '<span class="pkliap-adminbar-label">Partages</span><span class="pkliap-badge" aria-hidden="true">' . esc_html((string)$count) . '</span>';
+		// Node toujours visible : raccourci vers la page PK SocialSharing.
+		$label = '<span class="pkliap-adminbar-label">PK SocialSharing</span>';
+		if ($count > 0) {
+			$label .= '<span class="pkliap-badge" aria-hidden="true">' . esc_html((string)$count) . '</span>';
+		}
 		$admin_bar->add_node([
-			'id' => $node_id,
+			'id' => 'pkliap-alerts',
 			'title' => $label,
 			'href' => self::settings_url(),
 			'meta' => [
-				'title' => $alert_text . ' SocialSharing: ' . implode(' | ', $alerts),
-				'aria-label' => 'SocialSharing: ' . $alert_text,
+				'title' => $count > 0
+					? $count . ' alerte' . ($count > 1 ? 's' : '') . ' SocialSharing : ' . implode(' | ', $alerts)
+					: 'PK SocialSharing — réglages',
+				'aria-label' => $count > 0 ? ('SocialSharing : ' . $count . ' alerte' . ($count > 1 ? 's' : '')) : 'PK SocialSharing',
 			],
 		]);
 

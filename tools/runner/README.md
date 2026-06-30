@@ -73,13 +73,13 @@ $EDITOR ~/.config/pk-x-runner.json
 
 ```bash
 chmod +x tools/runner/start-chrome-macos.sh
-PK_VISIBLE=1 ./tools/runner/start-chrome-macos.sh
+./tools/runner/start-chrome-macos.sh
 ```
 
 `start-chrome-macos.sh` lance **Google Chrome Canary** (pas Chrome stable) sur le
 port CDP 9222, avec un profil dédié `~/Library/Application Support/Google/Chrome Canary/PK-Runner`.
-`PK_VISIBLE=1` affiche la fenêtre le temps du login ; ensuite elle est poussée
-hors-champ automatiquement.
+La fenêtre fait **600x900** par défaut (visible en haut à gauche, pour suivre les
+publicutions). Surchargeable : `PK_WINDOW_W`, `PK_WINDOW_H`, `PK_WINDOW_X`, `PK_WINDOW_Y`.
 
 Une fenêtre Canary s'ouvre (profil neuf). **Au premier lancement seulement** :
 connecte-toi à ton compte X (`x.com`) dans cette fenêtre, puis ferme-la. Les relances
@@ -130,21 +130,29 @@ launchctl unload ~/Library/LaunchAgents/com.pk.chrome-canary-cdp.plist
 
 ---
 
-## Setup Linux headless (serveur)
+## Setup Linux headless (Debian/Ubuntu serveur)
 
-### 1. Installer Node.js + Chromium + dépendances
+> ⚠️ **IP datacenter** : l'IP d'un serveur diffère de ton IP maison → X peut
+> re-valider la session (challenge, pas forcément ban). Préfère un VPS à IP
+> résidentielle. Le runner tourne en **Chromium headful sur Xvfb** (anti-détection,
+> jamais `--headless`).
+
+### Méthode rapide — script turnkey
 
 ```bash
-# Debian/Ubuntu
-sudo apt install -y nodejs npm chromium-browser
-# ou, si chromium absent du paquet :
-# sudo snap install chromium
+git clone <repo> /tmp/pk && sudo bash /tmp/pk/tools/runner/install-debian.sh
+```
 
+Installe tout (Node + Chromium + Xvfb, user, config, services systemd). Reste ensuite
+l'init de la session X (étape 3). Méthode manuelle détaillée ci-dessous.
+
+### 1. Installer Node.js + Chromium + Xvfb
+
+```bash
+sudo apt install -y nodejs npm chromium xvfb
 cd tools/runner
-sudo mkdir -p /opt/pk-x-runner
-sudo cp -r . /opt/pk-x-runner/
-cd /opt/pk-x-runner
-sudo npm install --omit=dev
+sudo mkdir -p /opt/pk-x-runner && sudo cp -a . /opt/pk-x-runner/
+cd /opt/pk-x-runner && sudo npm install --omit=dev
 ```
 
 ### 2. Config + profil
@@ -159,53 +167,31 @@ sudo chown -R x-runner:x-runner /var/lib/x-runner  # créer l'user d'abord (voir
 
 ### 3. Initialiser la session X (1 fois)
 
-Comme Chromium tournera headless, il faut se connecter à X une fois. Deux options :
-
-**Option A — tunnel SSH + Chromium headful** (recommandé)
+Chromium tourne **headful sur Xvfb** (affichage virtuel, anti-détection). Pour le
+premier login X, tunnel le port CDP vers ton Mac :
 
 ```bash
-# Sur le serveur, lance Chromium en mode fenêtré (headful) sur le display :0 via X fwd
-PK_HEADLESS=0 PK_CHROME_PROFILE=/var/lib/x-runner/profile \
-  ./start-chromium-linux.sh &
-
-# Depuis ton Mac, forward le port CDP + un affichage
+# Depuis ton Mac
 ssh -L 9222:127.0.0.1:9222 user@serveur
-# Puis dans Chrome sur ton Mac : ouvre http://127.0.0.1:9222 → onglet X → connecte-toi
+# Puis ouvre dans Chrome : http://127.0.0.1:9222 → un onglet → va sur x.com → connecte-toi
 ```
 
-**Option B — copie du profil macOS**
+La session persiste dans `/var/lib/x-runner/profile` et est réutilisée à chaque run.
+
+> ⚠️ Si l'IP du serveur diffère de ton IP maison, X peut re-valider la session
+> (challenge email/téléphone, pas un ban). Un VPS à IP résidentielle limite ce risque.
+
+### 4. Lancer Chromium (headful Xvfb) en service systemd
+
+L'unit est fournie dans `com.pk.chromium-cdp.service` (démarre Chromium sur Xvfb :99
+avec CDP 9222, `Restart=always`) :
 
 ```bash
-scp -r ~/Library/Application\ Support/Google/Chrome/PK-CDP-Profile user@serveur:/var/lib/x-runner/profile
-```
-⚠️ Si l'IP du serveur diffère beaucoup de ton IP domicile, X peut demander une
-re-validation (pas un ban). Préfère l'option A si possible.
-
-### 4. Lancer Chromium headless en service systemd
-
-Créer `/etc/systemd/system/chromium-cdp.service` :
-
-```ini
-[Unit]
-Description=Chromium headless avec CDP pour PK X Runner
-After=network-online.target
-
-[Service]
-Type=simple
-User=x-runner
-Environment=PK_HEADLESS=1
-Environment=PK_CHROME_PROFILE=/var/lib/x-runner/profile
-ExecStart=/opt/pk-x-runner/start-chromium-linux.sh
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
+sudo sed -e "s|__USER__|x-runner|g" -e "s|__RUNNER_DIR__|/opt/pk-x-runner|g" \
+  /opt/pk-x-runner/com.pk.chromium-cdp.service \
+  > /etc/systemd/system/pk-chromium-cdp.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now chromium-cdp.service
+sudo systemctl enable --now pk-chromium-cdp.service
 curl -s http://127.0.0.1:9222/json/version | head   # vérif
 ```
 

@@ -6,13 +6,18 @@
 # le profil par défaut de Chrome stable, mais Canary a son propre profil par
 # défaut → CDP y est autorisé sans --user-data-dir.
 #
-# Par défaut la fenêtre est poussée hors-champ (pas de focus steal, pas de
-# capture de curseur). Pour le 1er lancement (login X unique), passe PK_VISIBLE=1.
+# La fenêtre fait par défaut 600x900 (visible, pour suivre les publications),
+# en haut à gauche. Dimensions/position surchargeables : PK_WINDOW_W, PK_WINDOW_H,
+# PK_WINDOW_X, PK_WINDOW_Y.
 set -euo pipefail
 
 PORT="${PK_CDP_PORT:-9222}"
 CANARY="/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary"
 PROFILE="${PK_CANARY_PROFILE:-$HOME/Library/Application Support/Google/Chrome Canary/PK-Runner}"
+WIN_W="${PK_WINDOW_W:-600}"
+WIN_H="${PK_WINDOW_H:-900}"
+WIN_X="${PK_WINDOW_X:-80}"
+WIN_Y="${PK_WINDOW_Y:-80}"
 
 if [[ ! -x "$CANARY" ]]; then
 	echo "❌ Chrome Canary introuvable: $CANARY"
@@ -26,12 +31,8 @@ ARGS=(
 	--no-first-run
 	--no-default-browser-check
 	--disable-features=Translate
+	--window-position="$WIN_X,$WIN_Y"
+	--window-size="$WIN_W,$WIN_H"
 )
-
-if [[ "${PK_VISIBLE:-0}" != "1" ]]; then
-	# Fenêtre minuscule hors-champ : pas de vol de focus, pas de capture souris.
-	Args_window=( --window-position=-32000,-32000 --window-size=1,1 )
-	ARGS+=( "${Args_window[@]}" )
-fi
 
 exec "$CANARY" "${ARGS[@]}" "$@"
