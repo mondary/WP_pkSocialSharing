@@ -46,8 +46,9 @@ async function wpCall(cfg, method, route, body) {
 		headers: {
 			'X-PK-Runner-Token': cfg.runner_token,
 			Accept: 'application/json',
+			'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
 		},
-		signal: AbortSignal.timeout(20000),
+		signal: AbortSignal.timeout(60000),
 	};
 	if (body !== undefined) {
 		opts.headers['Content-Type'] = 'application/json';

@@ -44,7 +44,7 @@ async function wpCall(cfg, method, route, body) {
 	const opts = {
 		method,
 		headers: { 'X-PK-Runner-Token': cfg.runner_token, Accept: 'application/json', 'User-Agent': UA },
-		signal: AbortSignal.timeout(20000),
+		signal: AbortSignal.timeout(60000),
 	};
 	if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
 	const res = await fetch(url, opts);

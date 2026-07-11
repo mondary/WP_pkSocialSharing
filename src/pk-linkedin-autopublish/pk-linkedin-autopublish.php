@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.1.9
+ * Version: 1.2.5
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -75,10 +75,14 @@ final class PKLIAP_Plugin {
 		add_action('admin_post_pkliap_x_oauth_callback', [__CLASS__, 'handle_x_oauth_callback']);
 		add_action('admin_post_pkliap_x_disconnect', [__CLASS__, 'handle_x_disconnect']);
 		add_action('admin_post_pkliap_x_check', [__CLASS__, 'handle_x_check']);
+		add_action('admin_post_pkliap_x_intent', [__CLASS__, 'handle_x_intent']);
 		add_action('admin_post_pkliap_x_browser_generate_token', [__CLASS__, 'handle_x_browser_generate_token']);
 		add_action('admin_post_pkliap_clear_network_error', [__CLASS__, 'handle_clear_network_error']);
 		add_action('admin_post_pkliap_meta_connect', [__CLASS__, 'handle_meta_connect']);
 		add_action('admin_post_pkliap_meta_oauth_callback', [__CLASS__, 'handle_meta_oauth_callback']);
+		add_action('admin_post_pkliap_translate_test', [__CLASS__, 'handle_translate_test']);
+		add_action('admin_post_pkliap_gemini_models', [__CLASS__, 'handle_gemini_models']);
+		add_action('admin_post_pkliap_opencode_models', [__CLASS__, 'handle_opencode_models']);
 
 		add_action('transition_post_status', [__CLASS__, 'on_transition_post_status'], 10, 3);
 		add_action('pkliap_async_share_task', [__CLASS__, 'do_async_share'], 10, 1);
@@ -850,6 +854,34 @@ final class PKLIAP_Plugin {
 			'medium_publish_status' => 'public',
 			'last_medium_error' => '',
 			'last_medium_error_at' => 0,
+			// === Traduction automatique (config globale, voir Dashboard) ===
+			'translate_provider' => 'none',
+			'translate_source_lang' => '', // code ISO "" = déduit du locale WP
+			'translate_deepl_key' => '',
+			'translate_deepl_free' => 1, // 1 = api-free.deepl.com, 0 = api.deepl.com
+			'translate_mymemory_email' => '',
+			'translate_gemini_key' => '',
+			'translate_gemini_model' => 'gemini-2.0-flash',
+			'translate_zai_key' => '',
+			'translate_zai_model' => 'glm-4-flash',
+			'translate_zai_endpoint' => 'https://open.bigmodel.cn/api/paas/v4',
+			'translate_opencode_key' => '',
+			'translate_opencode_model' => '',
+			'translate_opencode_endpoint' => 'https://opencode.ai/zen/v1',
+			'translate_openai_compat_endpoint' => 'http://127.0.0.1:1234/v1',
+			'translate_openai_compat_key' => '',
+			'translate_openai_compat_model' => '',
+			'translate_apple_binary' => '', // chemin absolu du helper compilé
+			'last_translate_error' => '',
+			'last_translate_error_at' => 0,
+			'last_translate_ok_at' => 0,
+			// === Langue de partage par réseau ("" = langue originale) ===
+			'linkedin_share_lang' => '',
+			'x_share_lang' => '',
+			'fb_share_lang' => '',
+			'ig_share_lang' => '',
+			'threads_share_lang' => '',
+			'medium_share_lang' => '',
 		];
 	}
 
@@ -1026,6 +1058,43 @@ final class PKLIAP_Plugin {
 		$out['medium_publish_status'] = array_key_exists('medium_publish_status', $value) && in_array((string)$value['medium_publish_status'], ['draft', 'public', 'unlisted'], true) ? (string)$value['medium_publish_status'] : (string)$current['medium_publish_status'];
 		$medium_credentials_changed = ((string)$out['medium_user_id'] !== (string)$current['medium_user_id']) || ((string)$out['medium_access_token'] !== (string)$current['medium_access_token']);
 		$out['require_image'] = array_key_exists('require_image', $value) ? (empty($value['require_image']) ? 0 : 1) : (int)$current['require_image'];
+
+		// === Traduction : provider global + réglages par provider ===
+		if (array_key_exists('translate_provider', $value)) {
+			$allowed_providers = ['none', 'deepl', 'mymemory', 'gemini', 'zai_glm', 'opencode', 'openai_compat', 'apple_native'];
+			$out['translate_provider'] = in_array((string)$value['translate_provider'], $allowed_providers, true) ? (string)$value['translate_provider'] : 'none';
+		} else {
+			$out['translate_provider'] = (string)$current['translate_provider'];
+		}
+		$out['translate_source_lang'] = array_key_exists('translate_source_lang', $value)
+			? substr(preg_replace('/[^a-z]/', '', strtolower((string)$value['translate_source_lang'])), 0, 5)
+			: (string)$current['translate_source_lang'];
+		$out['translate_deepl_key'] = array_key_exists('translate_deepl_key', $value) ? sanitize_text_field((string)$value['translate_deepl_key']) : (string)$current['translate_deepl_key'];
+		$out['translate_deepl_free'] = array_key_exists('translate_deepl_free', $value) ? (empty($value['translate_deepl_free']) ? 0 : 1) : (int)$current['translate_deepl_free'];
+		$out['translate_mymemory_email'] = array_key_exists('translate_mymemory_email', $value) ? sanitize_email((string)$value['translate_mymemory_email']) : (string)$current['translate_mymemory_email'];
+		$out['translate_gemini_key'] = array_key_exists('translate_gemini_key', $value) ? sanitize_text_field((string)$value['translate_gemini_key']) : (string)$current['translate_gemini_key'];
+		$out['translate_gemini_model'] = array_key_exists('translate_gemini_model', $value) ? sanitize_text_field((string)$value['translate_gemini_model']) : (string)$current['translate_gemini_model'];
+		$out['translate_zai_key'] = array_key_exists('translate_zai_key', $value) ? sanitize_text_field((string)$value['translate_zai_key']) : (string)$current['translate_zai_key'];
+		$out['translate_zai_model'] = array_key_exists('translate_zai_model', $value) ? sanitize_text_field((string)$value['translate_zai_model']) : (string)$current['translate_zai_model'];
+		$out['translate_zai_endpoint'] = array_key_exists('translate_zai_endpoint', $value) ? esc_url_raw((string)$value['translate_zai_endpoint']) : (string)$current['translate_zai_endpoint'];
+		$out['translate_opencode_key'] = array_key_exists('translate_opencode_key', $value) ? sanitize_text_field((string)$value['translate_opencode_key']) : (string)$current['translate_opencode_key'];
+		$out['translate_opencode_model'] = array_key_exists('translate_opencode_model', $value) ? sanitize_text_field((string)$value['translate_opencode_model']) : (string)$current['translate_opencode_model'];
+		$out['translate_opencode_endpoint'] = array_key_exists('translate_opencode_endpoint', $value) ? esc_url_raw((string)$value['translate_opencode_endpoint']) : (string)$current['translate_opencode_endpoint'];
+		$out['translate_openai_compat_endpoint'] = array_key_exists('translate_openai_compat_endpoint', $value) ? esc_url_raw((string)$value['translate_openai_compat_endpoint']) : (string)$current['translate_openai_compat_endpoint'];
+		$out['translate_openai_compat_key'] = array_key_exists('translate_openai_compat_key', $value) ? sanitize_text_field((string)$value['translate_openai_compat_key']) : (string)$current['translate_openai_compat_key'];
+		$out['translate_openai_compat_model'] = array_key_exists('translate_openai_compat_model', $value) ? sanitize_text_field((string)$value['translate_openai_compat_model']) : (string)$current['translate_openai_compat_model'];
+		$out['translate_apple_binary'] = array_key_exists('translate_apple_binary', $value) ? sanitize_text_field((string)$value['translate_apple_binary']) : (string)$current['translate_apple_binary'];
+		// === Langue par réseau ===
+		$share_lang_keys = ['linkedin_share_lang', 'x_share_lang', 'fb_share_lang', 'ig_share_lang', 'threads_share_lang', 'medium_share_lang'];
+		$allowed_langs = array_keys(self::available_share_languages());
+		foreach ($share_lang_keys as $lang_key) {
+			if (array_key_exists($lang_key, $value)) {
+				$raw = substr(preg_replace('/[^a-z]/', '', strtolower((string)$value[$lang_key])), 0, 5);
+				$out[$lang_key] = in_array($raw, $allowed_langs, true) ? $raw : '';
+			} else {
+				$out[$lang_key] = (string)$current[$lang_key];
+			}
+		}
 		if (array_key_exists('media_mode', $value)) {
 			$out['media_mode'] = in_array((string)$value['media_mode'], ['opengraph', 'upload'], true) ? (string)$value['media_mode'] : $defaults['media_mode'];
 		} else {
@@ -1067,6 +1136,9 @@ final class PKLIAP_Plugin {
 			'last_threads_error_at',
 			'last_medium_error',
 			'last_medium_error_at',
+			'last_translate_error',
+			'last_translate_error_at',
+			'last_translate_ok_at',
 		] as $k) {
 			$out[$k] = $current[$k];
 		}
@@ -1440,8 +1512,7 @@ final class PKLIAP_Plugin {
 						</div>
 
 						<div class="pks-card pks-card--accent-ok pks-card--wide">
-							<div class="pks-card-title">Articles du jour</div>
-							<?php if (!$planned_post_ids): ?>
+							<div class="pks-card-title">Articles du jour</div>							<?php if (!$planned_post_ids): ?>
 								<p class="pks-info" style="margin:0;">Aucun article publié ou planifié aujourd’hui sur les types autorisés.</p>
 							<?php else: ?>
 								<table class="widefat striped" style="width:100%;border-collapse:collapse;">
@@ -1484,6 +1555,191 @@ final class PKLIAP_Plugin {
 								</table>
 							<?php endif; ?>
 						</div>
+
+						<form method="post" action="options.php" class="pks-card pks-card--accent-purple pks-card--wide" id="pks-translation-card">
+							<div class="pks-card-title">Traduction automatique</div>
+							<?php settings_fields('pkliap'); ?>
+							<p class="pks-info" style="margin:-4px 0 12px;">
+								Active la traduction du titre et de l'extrait lors du partage. Chaque réseau peut ensuite choisir sa langue cible dans son propre onglet. La traduction est mise en cache par article (invalidée quand le contenu change).
+							</p>
+							<table class="form-table" role="presentation">
+								<tr>
+									<th scope="row">Provider</th>
+									<td>
+										<select name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_provider]">
+											<?php foreach (self::translate_providers() as $code => $label): ?>
+												<option value="<?php echo esc_attr($code); ?>" <?php selected($code, (string)$opt['translate_provider']); ?>><?php echo esc_html($label); ?></option>
+											<?php endforeach; ?>
+										</select>
+										<p class="description" style="margin-top:6px;">
+											Recos : <strong>DeepL</strong> = qualité ref (CB requise, 500k chars/mois gratuit). <strong>MyMemory</strong> = gratuit sans CB. <strong>Apple FoundationModels</strong> = local macOS 26+, zéro coût, 100% privé (compile <code>tools/translator/apple-translator/build.sh</code>). <strong>OpenAI-compat</strong> = local via LM Studio/mlx_lm/llama.cpp.
+										</p>
+									</td>
+								</tr>
+								<tr>
+									<th scope="row">Langue source</th>
+									<td>
+										<select name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_source_lang]">
+											<?php foreach (self::available_share_languages() as $code => $label): ?>
+												<option value="<?php echo esc_attr($code); ?>" <?php selected($code, (string)$opt['translate_source_lang']); ?>><?php echo $code === '' ? 'Auto (déduit du locale WP)' : esc_html($label . ' (' . $code . ')'); ?></option>
+											<?php endforeach; ?>
+										</select>
+										<p class="description" style="margin-top:6px;">Langue par défaut des articles du site. Si "Auto", utilise le locale WordPress (<code><?php echo esc_html((string)get_locale()); ?></code>).</p>
+									</td>
+								</tr>
+
+								<?php
+								$tp = (string)$opt['translate_provider'];
+								$show = static function (string $key) use ($tp) { return $tp === $key ? '' : 'display:none;'; };
+								?>
+								<tr data-pks-tr-row="deepl" style="<?php echo esc_attr($show('deepl')); ?>">
+									<th scope="row">DeepL — Clé API</th>
+									<td>
+										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_deepl_key]" value="<?php echo esc_attr((string)$opt['translate_deepl_key']); ?>" placeholder="00000000-aaaa-..."/>
+										<p><label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_deepl_free]" value="1" <?php checked(1, (int)$opt['translate_deepl_free']); ?>/> Compte gratuit (clé en <code>:fx</code>, 500k chars/mois)</label></p>
+										<p class="description">Obtenir une clé : <a href="https://www.deepl.com/pro-account/account/overview" target="_blank" rel="noopener">DeepL Pro → Account</a>. Compte gratuit = CB demandée mais non débitée.</p>
+									</td>
+								</tr>
+								<tr data-pks-tr-row="mymemory" style="<?php echo esc_attr($show('mymemory')); ?>">
+									<th scope="row">MyMemory — Email (optionnel)</th>
+									<td>
+										<input class="regular-text" type="email" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_mymemory_email]" value="<?php echo esc_attr((string)$opt['translate_mymemory_email']); ?>" placeholder="toi@exemple.com"/>
+										<p class="description">Sans email : 5000 chars/jour anonyme. Avec email : 50000 chars/jour. Pas de CB, pas d'inscription.</p>
+									</td>
+								</tr>
+							<tr data-pks-tr-row="gemini" style="<?php echo esc_attr($show('gemini')); ?>">
+								<th scope="row">Gemini — Clé + Modèle</th>
+								<td>
+									<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_gemini_key]" value="<?php echo esc_attr((string)$opt['translate_gemini_key']); ?>" placeholder="AIza..."/>
+									<?php
+									$gemini_models = get_transient('pkliap_gemini_models');
+									$gemini_current = (string)$opt['translate_gemini_model'];
+									$gemini_has_list = is_array($gemini_models) && count($gemini_models) > 0;
+									?>
+									<div style="margin-top:8px;">
+										<label>Modèle<br/>
+											<?php if ($gemini_has_list): ?>
+												<select name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_gemini_model]" style="min-width:240px;">
+													<?php if ($gemini_current !== '' && !in_array($gemini_current, $gemini_models, true)): ?>
+														<option value="<?php echo esc_attr($gemini_current); ?>" selected><?php echo esc_html($gemini_current); ?> (custom)</option>
+													<?php endif; ?>
+													<?php foreach ($gemini_models as $m): ?>
+														<option value="<?php echo esc_attr($m); ?>" <?php selected($m, $gemini_current); ?>><?php echo esc_html($m); ?></option>
+													<?php endforeach; ?>
+												</select>
+											<?php else: ?>
+												<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_gemini_model]" value="<?php echo esc_attr($gemini_current); ?>" placeholder="gemini-2.0-flash"/>
+											<?php endif; ?>
+										</label>
+										<a class="button button-secondary" style="margin-left:8px;vertical-align:top;" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_gemini_models'), 'pkliap_gemini_models')); ?>">Rafraîchir les modèles</a>
+										<?php if ($gemini_has_list): ?>
+											<span class="pks-pill pks-pill--ok" style="margin-left:6px;"><?php echo count($gemini_models); ?> modèles chargés</span>
+										<?php else: ?>
+											<p class="description" style="margin:4px 0 0;">Clique « Rafraîchir les modèles » après avoir enregistré ta clé pour charger la liste.</p>
+										<?php endif; ?>
+									</div>
+									<p class="description" style="margin-top:6px;">Obtenir une clé : <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>. Free tier : 15 req/min, 1500/jour.</p>
+								</td>
+							</tr>
+								<tr data-pks-tr-row="zai_glm" style="<?php echo esc_attr($show('zai_glm')); ?>">
+									<th scope="row">ZAI / GLM — Clé + Modèle</th>
+									<td>
+										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_zai_key]" value="<?php echo esc_attr((string)$opt['translate_zai_key']); ?>" placeholder="..."/>
+										<p><label>Modèle<br/><input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_zai_model]" value="<?php echo esc_attr((string)$opt['translate_zai_model']); ?>" placeholder="glm-4-flash"/></label></p>
+										<p><label>Endpoint<br/><input class="regular-text" type="url" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_zai_endpoint]" value="<?php echo esc_attr((string)$opt['translate_zai_endpoint']); ?>"/></label></p>
+									</td>
+								</tr>
+							<tr data-pks-tr-row="opencode" style="<?php echo esc_attr($show('opencode')); ?>">
+								<th scope="row">OpenCode ZEN — Clé + Modèle</th>
+								<td>
+									<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_opencode_key]" value="<?php echo esc_attr((string)$opt['translate_opencode_key']); ?>" placeholder="oc_..."/>
+									<?php
+									$oc_models = get_transient('pkliap_opencode_models');
+									$oc_current = (string)$opt['translate_opencode_model'];
+									$oc_has_list = is_array($oc_models) && count($oc_models) > 0;
+									?>
+									<div style="margin-top:8px;">
+										<label>Modèle<br/>
+											<?php if ($oc_has_list): ?>
+												<select name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_opencode_model]" style="min-width:240px;">
+													<?php if ($oc_current !== '' && !in_array($oc_current, $oc_models, true)): ?>
+														<option value="<?php echo esc_attr($oc_current); ?>" selected><?php echo esc_html($oc_current); ?> (custom)</option>
+													<?php endif; ?>
+													<?php foreach ($oc_models as $m): ?>
+														<option value="<?php echo esc_attr($m); ?>" <?php selected($m, $oc_current); ?>><?php echo esc_html($m); ?></option>
+													<?php endforeach; ?>
+												</select>
+											<?php else: ?>
+												<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_opencode_model]" value="<?php echo esc_attr($oc_current); ?>" placeholder="gpt-5-nano"/>
+											<?php endif; ?>
+										</label>
+										<a class="button button-secondary" style="margin-left:8px;vertical-align:top;" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_opencode_models'), 'pkliap_opencode_models')); ?>">Rafraîchir les modèles</a>
+										<?php if ($oc_has_list): ?>
+											<span class="pks-pill pks-pill--ok" style="margin-left:6px;"><?php echo count($oc_models); ?> modèles chargés</span>
+										<?php else: ?>
+											<p class="description" style="margin:4px 0 0;">Clique « Rafraîchir les modèles » après avoir enregistré ta clé pour charger la liste.</p>
+										<?php endif; ?>
+									</div>
+									<p class="description" style="margin-top:6px;">Obtenir une clé : <a href="https://opencode.ai/auth" target="_blank" rel="noopener">OpenCode ZEN</a>. Modèles <strong>gratuits</strong> : <code>gpt-5-nano</code>, <code>deepseek-v4-flash-free</code>, <code>mimo-v2.5-free</code>, <code>nemotron-3-ultra-free</code>, <code>big-pickle</code>. Retry auto 3× sur HTTP 429/503.</p>
+								</td>
+							</tr>
+								<tr data-pks-tr-row="openai_compat" style="<?php echo esc_attr($show('openai_compat')); ?>">
+									<th scope="row">OpenAI-compat — Endpoint local</th>
+									<td>
+										<p><label>Endpoint base<br/><input class="regular-text" type="url" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_openai_compat_endpoint]" value="<?php echo esc_attr((string)$opt['translate_openai_compat_endpoint']); ?>" placeholder="http://127.0.0.1:1234/v1"/></label></p>
+										<p><label>Clé (laisser vide si pas requise)<br/><input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_openai_compat_key]" value="<?php echo esc_attr((string)$opt['translate_openai_compat_key']); ?>"/></label></p>
+										<p><label>Modèle<br/><input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_openai_compat_model]" value="<?php echo esc_attr((string)$opt['translate_openai_compat_model']); ?>" placeholder="llama-3.1-8b-instruct"/></label></p>
+										<p class="description">
+											Compatible <strong>LM Studio</strong> (port 1234), <strong>mlx_lm.server</strong> (8080), <strong>llama.cpp server</strong> (8080), <strong>Jan / GPT4All</strong>.
+											Modèles recommandés : <code>nllb-200-1.3B</code> (trad spécialisée), <code>qwen2.5-7b-instruct</code> (multilingue), <code>gemma-2-9b-it</code>.
+										</p>
+									</td>
+								</tr>
+								<tr data-pks-tr-row="apple_native" style="<?php echo esc_attr($show('apple_native')); ?>">
+									<th scope="row">Apple FoundationModels — Binaire</th>
+									<td>
+										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_apple_binary]" value="<?php echo esc_attr((string)$opt['translate_apple_binary']); ?>" placeholder="/chemin/absolu/vers/apple-translator"/>
+										<p class="description">
+											Helper Swift natif macOS 26+. Compiler avec : <code>tools/translator/apple-translator/build.sh</code>.<br/>
+											Puis coller le chemin du binaire ci-dessus. Aucune clé API, 100% local.
+										</p>
+									</td>
+								</tr>
+
+								<tr>
+									<th scope="row">État</th>
+									<td>
+										<div class="pks-actions-row" style="margin-bottom:6px;">
+											<a class="button button-secondary" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_translate_test'), 'pkliap_translate_test')); ?>">Tester la traduction</a>
+											<?php if (!empty($opt['last_translate_ok_at'])): ?>
+												<span class="pks-pill pks-pill--ok">OK • <?php echo esc_html(wp_date('Y-m-d H:i', (int)$opt['last_translate_ok_at'])); ?></span>
+											<?php endif; ?>
+											<?php if (!empty($opt['last_translate_error'])): ?>
+												<span class="pks-pill pks-pill--bad">Erreur • <?php echo esc_html(wp_date('Y-m-d H:i', (int)$opt['last_translate_error_at'])); ?></span>
+											<?php endif; ?>
+										</div>
+										<?php if (!empty($opt['last_translate_error'])): ?>
+											<p class="description" style="color:#b32d2e;"><?php echo esc_html((string)$opt['last_translate_error']); ?></p>
+										<?php endif; ?>
+									</td>
+								</tr>
+							</table>
+							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+							<script>
+								(function() {
+									var sel = document.querySelector('select[name="<?php echo esc_js(self::OPT_KEY); ?>[translate_provider]"]');
+									if (!sel) return;
+									function refresh() {
+										var rows = document.querySelectorAll('[data-pks-tr-row]');
+										rows.forEach(function(r) {
+											r.style.display = (r.getAttribute('data-pks-tr-row') === sel.value) ? '' : 'none';
+										});
+									}
+									sel.addEventListener('change', refresh);
+									refresh();
+								})();
+							</script>
+						</form>
 					</div>
 				<?php elseif ($active_network === 'x'): ?>
 					<div class="pks-grid">
@@ -1599,26 +1855,28 @@ final class PKLIAP_Plugin {
 								<div style="width:100%;">
 									<strong>Personnalisation X</strong>
 									<p class="pks-info" style="margin:4px 0 10px;">Laisse vide pour reprendre les réglages LinkedIn. Tu peux définir un ordre différent, par exemple sans URL en premier.</p>
-									<div class="pks-subbox">
-										<p class="pks-subtitle">Composition</p>
-										<label class="pks-inline">
-											<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_title]" value="0"/>
-											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_title]" value="1" <?php checked(1, (int)$opt['x_include_title']); ?>/>
-											Inclure le titre
-										</label>
-										<label class="pks-inline">
-											<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_excerpt]" value="0"/>
-											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_excerpt]" value="1" <?php checked(1, (int)$opt['x_include_excerpt']); ?>/>
-											Inclure l’extrait
-										</label>
-										<label class="pks-inline">
-											<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_url]" value="0"/>
-											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_url]" value="1" <?php checked(1, (int)$opt['x_include_url']); ?>/>
-											Inclure l’URL
-										</label>
-										<label>Ordre du contenu<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_content_order]" value="<?php echo esc_attr((string)$opt['x_content_order']); ?>" placeholder="title,excerpt,url"/></label>
-										<p class="description" style="margin:4px 0 0;">Exemples: <code>title,excerpt,url</code> ou <code>title,url</code>. Laisser vide = ordre LinkedIn.</p>
-										<p class="pks-subtitle" style="margin-top:12px;">Personnalisation</p>
+								<div class="pks-subbox">
+									<p class="pks-subtitle">Composition</p>
+									<label class="pks-inline">
+										<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_title]" value="0"/>
+										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_title]" value="1" <?php checked(1, (int)$opt['x_include_title']); ?>/>
+										Inclure le titre
+									</label>
+									<label class="pks-inline">
+										<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_excerpt]" value="0"/>
+										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_excerpt]" value="1" <?php checked(1, (int)$opt['x_include_excerpt']); ?>/>
+										Inclure l’extrait
+									</label>
+									<label class="pks-inline">
+										<input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_url]" value="0"/>
+										<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_include_url]" value="1" <?php checked(1, (int)$opt['x_include_url']); ?>/>
+										Inclure l’URL
+									</label>
+									<label>Ordre du contenu<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_content_order]" value="<?php echo esc_attr((string)$opt['x_content_order']); ?>" placeholder="title,excerpt,url"/></label>
+									<p class="description" style="margin:4px 0 0;">Exemples: <code>title,excerpt,url</code> ou <code>title,url</code>. Laisser vide = ordre LinkedIn.</p>
+									<p class="pks-subtitle" style="margin-top:12px;">Langue</p>
+									<?php echo self::render_share_lang_field('x_share_lang', (string)$opt['x_share_lang']); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+									<p class="pks-subtitle" style="margin-top:12px;">Personnalisation</p>
 										<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_prefix]" value="<?php echo esc_attr((string)$opt['x_prefix']); ?>"/></label>
 										<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[x_suffix]" value="<?php echo esc_attr((string)$opt['x_suffix']); ?>"/></label>
 										<label>Template avancé (optionnel)<br/>
@@ -1723,7 +1981,7 @@ final class PKLIAP_Plugin {
 										$x_post_url = $x_post_id ? ('https://x.com/i/web/status/' . rawurlencode($x_post_id)) : '';
 										$x_status = $x_shared_at ? ('Partagé le ' . esc_html(wp_date('Y-m-d H:i', $x_shared_at)) . ($x_post_id ? '<br/><code style="font-size:11px;">' . esc_html($x_post_id) . '</code>' : '') . ($x_post_url ? '<br/><a href="' . esc_url($x_post_url) . '" target="_blank" rel="noopener">Voir sur X</a>' : '')) : 'Jamais partagé';
 										$x_action_url = wp_nonce_url(self::admin_url_action('pkliap_test_post') . '&post_id=' . (int)$p->ID . '&network=x', 'pkliap_test_post_' . (int)$p->ID);
-										$x_intent_url = self::build_x_intent_url((int)$p->ID, $opt);
+										$x_intent_url = wp_nonce_url(self::admin_url_action('pkliap_x_intent') . '&post_id=' . (int)$p->ID, 'pkliap_x_intent_' . (int)$p->ID);
 										$edit_url = get_edit_post_link($p->ID, '');
 										$thumb_html = get_the_post_thumbnail($p->ID, [48, 48], ['style' => 'width:48px;height:48px;object-fit:cover;border-radius:4px;']);
 										?>
@@ -1821,6 +2079,8 @@ final class PKLIAP_Plugin {
 										</label>
 										<label>Ordre du contenu<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_content_order]" value="<?php echo esc_attr((string)$opt['fb_content_order']); ?>" placeholder="title,excerpt,url"/></label>
 										<p class="description" style="margin:4px 0 0;">Exemples: <code>title,excerpt,url</code> ou <code>title,excerpt</code>. Laisser vide = ordre LinkedIn.</p>
+										<p class="pks-subtitle" style="margin-top:12px;">Langue</p>
+										<?php echo self::render_share_lang_field('fb_share_lang', (string)$opt['fb_share_lang']); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 										<p class="pks-subtitle" style="margin-top:12px;">Personnalisation</p>
 										<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_prefix]" value="<?php echo esc_attr((string)$opt['fb_prefix']); ?>"/></label>
 										<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[fb_suffix]" value="<?php echo esc_attr((string)$opt['fb_suffix']); ?>"/></label>
@@ -1960,6 +2220,10 @@ final class PKLIAP_Plugin {
 							<?php settings_fields('pkliap'); ?>
 							<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[ig_enabled]" value="1" <?php checked(1, (int)$opt['ig_enabled']); ?>/> Publier automatiquement sur Instagram</label>
 							<p class="pks-info" style="margin:8px 0 0;">Nécessite une image mise en avant publique (featured image).</p>
+							<div class="pks-subbox" style="margin-top:12px;">
+								<p class="pks-subtitle">Langue de la légende</p>
+								<?php echo self::render_share_lang_field('ig_share_lang', (string)$opt['ig_share_lang']); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							</div>
 							<?php if (!empty($opt['last_ig_error'])): ?>
 								<p class="description" style="color:#b32d2e;">Dernière erreur Instagram: <?php echo esc_html((string)$opt['last_ig_error']); ?></p>
 								<p style="margin:8px 0 0;">
@@ -2080,6 +2344,10 @@ final class PKLIAP_Plugin {
 							<?php settings_fields('pkliap'); ?>
 							<label class="pks-inline"><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[threads_enabled]" value="1" <?php checked(1, (int)$opt['threads_enabled']); ?>/> Publier automatiquement sur Threads</label>
 							<p class="pks-info" style="margin:8px 0 0;">Publication texte via la Threads API officielle. Limite de texte Threads: 500 caracteres.</p>
+							<div class="pks-subbox" style="margin-top:12px;">
+								<p class="pks-subtitle">Langue du partage</p>
+								<?php echo self::render_share_lang_field('threads_share_lang', (string)$opt['threads_share_lang']); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							</div>
 							<?php if (!empty($opt['last_threads_error'])): ?>
 								<p class="description" style="color:#b32d2e;">Derniere erreur Threads: <?php echo esc_html((string)$opt['last_threads_error']); ?></p>
 							<?php endif; ?>
@@ -2187,13 +2455,18 @@ final class PKLIAP_Plugin {
 							<?php settings_fields('pkliap'); ?>
 							<label class="pks-inline"><input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_enabled]" value="0"/><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_enabled]" value="1" <?php checked(1, (int)$opt['medium_enabled']); ?>/> Publier automatiquement sur Medium</label>
 							<p class="pks-info" style="margin:8px 0 12px;">Le post Medium reprend le contenu HTML de l’article WordPress et renseigne l’URL canonique vers l’article original.</p>
-							<label>Statut de publication<br/>
-								<select name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_publish_status]">
-									<option value="public" <?php selected('public', (string)$opt['medium_publish_status']); ?>>Public</option>
-									<option value="draft" <?php selected('draft', (string)$opt['medium_publish_status']); ?>>Brouillon</option>
-									<option value="unlisted" <?php selected('unlisted', (string)$opt['medium_publish_status']); ?>>Non listé</option>
-								</select>
-							</label>
+						<label>Statut de publication<br/>
+							<select name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_publish_status]">
+								<option value="public" <?php selected('public', (string)$opt['medium_publish_status']); ?>>Public</option>
+								<option value="draft" <?php selected('draft', (string)$opt['medium_publish_status']); ?>>Brouillon</option>
+								<option value="unlisted" <?php selected('unlisted', (string)$opt['medium_publish_status']); ?>>Non listé</option>
+							</select>
+						</label>
+						<div class="pks-subbox" style="margin-top:12px;">
+							<p class="pks-subtitle">Langue du titre</p>
+							<?php echo self::render_share_lang_field('medium_share_lang', (string)$opt['medium_share_lang']); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							<p class="description" style="margin-top:6px;"><em>Note Medium : seul le titre est traduit en v1, le corps HTML reste dans la langue originale.</em></p>
+						</div>
 							<?php if (!empty($opt['last_medium_error'])): ?>
 								<p class="description" style="color:#b32d2e;">Dernière erreur Medium: <?php echo esc_html((string)$opt['last_medium_error']); ?></p>
 								<p style="margin:8px 0 0;">
@@ -2504,21 +2777,23 @@ final class PKLIAP_Plugin {
 									<span class="pks-pill pks-pill--ok">TEXTE</span>
 									<div>
 										<strong>Texte</strong>
-										<div class="pks-subbox">
-											<p class="pks-subtitle">Composition</p>
-											<label class="pks-inline">
-												<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_title]" value="1" <?php checked(1, (int)$opt['include_title']); ?>/>
-												Inclure le titre
-											</label>
-											<label class="pks-inline">
-												<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_excerpt]" value="1" <?php checked(1, (int)$opt['include_excerpt']); ?>/>
-												Inclure l’extrait
-											</label>
-											<label class="pks-inline">
-												<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_url]" value="1" <?php checked(1, (int)$opt['include_url']); ?>/>
-												Inclure l’URL
-											</label>
-											<p class="pks-subtitle" style="margin-top:12px;">Personnalisation</p>
+									<div class="pks-subbox">
+										<p class="pks-subtitle">Composition</p>
+										<label class="pks-inline">
+											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_title]" value="1" <?php checked(1, (int)$opt['include_title']); ?>"/>
+											Inclure le titre
+										</label>
+										<label class="pks-inline">
+											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_excerpt]" value="1" <?php checked(1, (int)$opt['include_excerpt']); ?>"/>
+											Inclure l’extrait
+										</label>
+										<label class="pks-inline">
+											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_url]" value="1" <?php checked(1, (int)$opt['include_url']); ?>"/>
+											Inclure l’URL
+										</label>
+										<p class="pks-subtitle" style="margin-top:12px;">Langue</p>
+										<?php echo self::render_share_lang_field('linkedin_share_lang', (string)$opt['linkedin_share_lang']); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+										<p class="pks-subtitle" style="margin-top:12px;">Personnalisation</p>
 											<label>Préfixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[prefix]" value="<?php echo esc_attr($opt['prefix']); ?>"/></label>
 											<label>Suffixe<br/><input class="large-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[suffix]" value="<?php echo esc_attr($opt['suffix']); ?>"/></label>
 											<label>Template avancé (optionnel)<br/>
@@ -3392,6 +3667,25 @@ final class PKLIAP_Plugin {
 		exit;
 	}
 
+	public static function handle_x_intent(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		$post_id = isset($_REQUEST['post_id']) ? (int)$_REQUEST['post_id'] : 0;
+		if ($post_id <= 0) {
+			wp_die('Post ID invalide.');
+		}
+		check_admin_referer('pkliap_x_intent_' . $post_id);
+		$post = get_post($post_id);
+		if (!$post || $post->post_status !== 'publish') {
+			wp_die('Article non publié.');
+		}
+
+		$intent_url = self::build_x_intent_url($post_id, self::get_options());
+		wp_safe_redirect($intent_url);
+		exit;
+	}
+
 	public static function handle_clear_network_error(): void {
 		if (!current_user_can('manage_options')) {
 			wp_die('Forbidden');
@@ -3614,13 +3908,131 @@ final class PKLIAP_Plugin {
 		exit;
 	}
 
+	public static function handle_translate_test(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_translate_test');
+		$opt = self::get_options();
+		$result = self::run_translate_test($opt);
+		if ($result['ok']) {
+			self::update_options(['last_translate_error' => '', 'last_translate_error_at' => 0, 'last_translate_ok_at' => time()]);
+			self::set_flash('notice', sprintf('Traduction OK (%s) : "%s" → "%s"', $result['provider'], $result['input'], $result['output']));
+		} else {
+			self::update_options(['last_translate_error' => $result['message'], 'last_translate_error_at' => time()]);
+			self::set_flash('error', 'Test traduction échoué : ' . $result['message']);
+		}
+		wp_safe_redirect(self::settings_url(['network' => 'dashboard', '_t' => time()]) . '#pks-translation-card');
+		exit;
+	}
+
+	public static function handle_gemini_models(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_gemini_models');
+		$opt = self::get_options();
+		$key = trim((string)($opt['translate_gemini_key'] ?? ''));
+		if ($key === '') {
+			self::set_flash('error', 'Gemini : clé API manquante. Saisis ta clé puis enregistre avant de rafraîchir les modèles.');
+			wp_safe_redirect(self::settings_url(['network' => 'dashboard', '_t' => time()]) . '#pks-translation-card');
+			exit;
+		}
+		$url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' . rawurlencode($key);
+		$res = wp_remote_get($url, ['timeout' => 20]);
+		if (is_wp_error($res)) {
+			self::set_flash('error', 'Gemini list models : ' . $res->get_error_message());
+			wp_safe_redirect(self::settings_url(['network' => 'dashboard', '_t' => time()]) . '#pks-translation-card');
+			exit;
+		}
+		$code = (int)wp_remote_retrieve_response_code($res);
+		$body = json_decode((string)wp_remote_retrieve_body($res), true);
+		if ($code !== 200 || !is_array($body)) {
+			self::set_flash('error', 'Gemini list models HTTP ' . $code . ' : ' . substr((string)wp_remote_retrieve_body($res), 0, 200));
+			wp_safe_redirect(self::settings_url(['network' => 'dashboard', '_t' => time()]) . '#pks-translation-card');
+			exit;
+		}
+		$models = [];
+		foreach (($body['models'] ?? []) as $m) {
+			$name = (string)($m['name'] ?? '');
+			// Le name est préfixé "models/gemini-2.0-flash"
+			$name = preg_replace('#^models/#', '', $name);
+			if ($name === '') {
+				continue;
+			}
+			$methods = $m['supportedGenerationMethods'] ?? [];
+			// On ne garde que les modèles qui supportent generateContent (text-to-text).
+			if (in_array('generateContent', $methods, true)) {
+				$models[] = $name;
+			}
+		}
+		$models = array_values(array_unique($models));
+		sort($models);
+		set_transient('pkliap_gemini_models', $models, HOUR_IN_SECONDS);
+		self::set_flash('notice', sprintf('Gemini : %d modèles disponibles.', count($models)));
+		wp_safe_redirect(self::settings_url(['network' => 'dashboard', '_t' => time()]) . '#pks-translation-card');
+		exit;
+	}
+
+	public static function handle_opencode_models(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_opencode_models');
+		$opt = self::get_options();
+		$key = trim((string)($opt['translate_opencode_key'] ?? ''));
+		if ($key === '') {
+			self::set_flash('error', 'OpenCode : clé API manquante. Saisis ta clé ZEN puis enregistre avant de rafraîchir les modèles.');
+			wp_safe_redirect(self::settings_url(['network' => 'dashboard', '_t' => time()]) . '#pks-translation-card');
+			exit;
+		}
+		$base = rtrim((string)($opt['translate_opencode_endpoint'] ?? ''), '/');
+		if ($base === '') {
+			$base = 'https://opencode.ai/zen/v1';
+		}
+		$url = $base . '/models';
+		$res = wp_remote_get($url, [
+			'timeout' => 20,
+			'headers' => [
+				'Authorization' => 'Bearer ' . $key,
+				'Accept' => 'application/json',
+			],
+		]);
+		if (is_wp_error($res)) {
+			self::set_flash('error', 'OpenCode list models : ' . $res->get_error_message());
+			wp_safe_redirect(self::settings_url(['network' => 'dashboard', '_t' => time()]) . '#pks-translation-card');
+			exit;
+		}
+		$code = (int)wp_remote_retrieve_response_code($res);
+		$body = json_decode((string)wp_remote_retrieve_body($res), true);
+		if ($code !== 200 || !is_array($body)) {
+			self::set_flash('error', 'OpenCode list models HTTP ' . $code . ' : ' . substr((string)wp_remote_retrieve_body($res), 0, 200));
+			wp_safe_redirect(self::settings_url(['network' => 'dashboard', '_t' => time()]) . '#pks-translation-card');
+			exit;
+		}
+		// Format OpenAI-compatible : { data: [ { id: "model-id", … }, … ] }
+		$models = [];
+		foreach (($body['data'] ?? []) as $m) {
+			$id = (string)($m['id'] ?? '');
+			if ($id === '') {
+				continue;
+			}
+			$models[] = $id;
+		}
+		$models = array_values(array_unique($models));
+		sort($models);
+		set_transient('pkliap_opencode_models', $models, HOUR_IN_SECONDS);
+		self::set_flash('notice', sprintf('OpenCode ZEN : %d modèles disponibles.', count($models)));
+		wp_safe_redirect(self::settings_url(['network' => 'dashboard', '_t' => time()]) . '#pks-translation-card');
+		exit;
+	}
+
 	public static function handle_test_post(): void {
 		if (!current_user_can('manage_options')) {
 			wp_die('Forbidden');
 		}
 		$post_id = isset($_REQUEST['post_id']) ? (int)$_REQUEST['post_id'] : 0;
-		$network = isset($_REQUEST['network']) ? sanitize_key((string)wp_unslash($_REQUEST['network'])) : 'linkedin';
-		if (!in_array($network, ['linkedin', 'x', 'facebook', 'instagram', 'threads', 'medium'], true)) {
+		$network = isset($_REQUEST['network']) ? sanitize_key((string)wp_unslash($_REQUEST['network'])) : 'linkedin';		if (!in_array($network, ['linkedin', 'x', 'facebook', 'instagram', 'threads', 'medium'], true)) {
 			$network = 'linkedin';
 		}
 		if (!$post_id) {
@@ -4845,7 +5257,7 @@ final class PKLIAP_Plugin {
 
 		$link = self::get_post_link($post_id, $opt);
 		$payload = [
-			'title' => wp_strip_all_tags(get_the_title($post_id)),
+			'title' => self::maybe_translate_field($post_id, 'title', wp_strip_all_tags(get_the_title($post_id)), (string)($opt['medium_share_lang'] ?? ''), $opt),
 			'contentFormat' => 'html',
 			'content' => self::build_medium_html_content($post_id),
 			'canonicalUrl' => $link,
@@ -4974,6 +5386,21 @@ final class PKLIAP_Plugin {
 		return $colors[$key] ?? '#64748b';
 	}
 
+	/**
+	 * Rendu du sélecteur de langue de partage pour un réseau.
+	 * À injecter dans la subbox "Composition" de chaque onglet réseau.
+	 */
+	private static function render_share_lang_field(string $key, string $value): string {
+		$html = '<label>Langue du partage<br/>';
+		$html .= '<select name="' . esc_attr(self::OPT_KEY . '[' . $key . ']') . '">';
+		foreach (self::available_share_languages() as $code => $label) {
+			$html .= '<option value="' . esc_attr($code) . '"' . selected($code, $value, false) . '>' . esc_html($label . ($code !== '' ? ' (' . $code . ')' : '')) . '</option>';
+		}
+		$html .= '</select></label>';
+		$html .= '<p class="description" style="margin:4px 0 0;">"Langue originale" = pas de traduction. Sinon, le titre et l\'extrait sont traduits via le provider configuré dans le Dashboard.</p>';
+		return $html;
+	}
+
 	private static function build_post_share_status_items(int $post_id): array {
 		$linkedin_urn = (string)get_post_meta($post_id, self::META_SHARE_URN, true);
 		$x_post_id = (string)get_post_meta($post_id, self::META_X_POST_ID, true);
@@ -5065,11 +5492,11 @@ final class PKLIAP_Plugin {
 	}
 
 	private static function build_linkedin_text(int $post_id, array $opt, string $link): string {
-		return self::build_network_text($post_id, $opt, $link, '', 620, 150);
+		return self::build_network_text($post_id, $opt, $link, '', 620, 150, (string)($opt['linkedin_share_lang'] ?? ''));
 	}
 
 	private static function build_x_text(int $post_id, array $opt, string $link): string {
-		return self::build_network_text($post_id, $opt, $link, 'x_', 280);
+		return self::build_network_text($post_id, $opt, $link, 'x_', 280, 260, (string)($opt['x_share_lang'] ?? ''));
 	}
 
 	private static function build_x_intent_url(int $post_id, array $opt): string {
@@ -5085,20 +5512,26 @@ final class PKLIAP_Plugin {
 	}
 
 	private static function build_facebook_text(int $post_id, array $opt, string $link): string {
-		return self::build_network_text($post_id, $opt, $link, 'fb_', 5000);
+		return self::build_network_text($post_id, $opt, $link, 'fb_', 5000, 260, (string)($opt['fb_share_lang'] ?? ''));
 	}
 
 	private static function build_instagram_caption(int $post_id, array $opt, string $link): string {
-		return self::build_network_text($post_id, $opt, $link, '', 2200);
+		return self::build_network_text($post_id, $opt, $link, '', 2200, 260, (string)($opt['ig_share_lang'] ?? ''));
 	}
 
 	private static function build_threads_text(int $post_id, array $opt, string $link): string {
-		return self::build_network_text($post_id, $opt, $link, '', 500);
+		return self::build_network_text($post_id, $opt, $link, '', 500, 260, (string)($opt['threads_share_lang'] ?? ''));
 	}
 
-	private static function build_network_text(int $post_id, array $opt, string $link, string $prefix_key, int $limit, int $excerpt_limit = 260): string {
+	private static function build_network_text(int $post_id, array $opt, string $link, string $prefix_key, int $limit, int $excerpt_limit = 260, string $share_lang = ''): string {
 		$title = wp_strip_all_tags(get_the_title($post_id));
 		$excerpt = self::safe_excerpt($post_id, $excerpt_limit);
+
+		// Traduction si le réseau a une langue cible différente de la source.
+		if ($share_lang !== '') {
+			$title = self::maybe_translate_field($post_id, 'title', $title, $share_lang, $opt);
+			$excerpt = self::maybe_translate_field($post_id, 'excerpt', $excerpt, $share_lang, $opt);
+		}
 		$template = self::network_opt_string($opt, $prefix_key . 'text_template', 'text_template');
 
 		if (trim($template) !== '') {
@@ -6206,6 +6639,465 @@ final class PKLIAP_Plugin {
 			return new WP_Error('pkliap_me_failed', 'Réponse LinkedIn invalide : /v2/userinfo (sub manquant) et /v2/me (id manquant).');
 		}
 		return $id;
+	}
+
+	// =========================================================================
+	// Traduction automatique
+	// =========================================================================
+
+	const META_TR_CACHE = '_pksocial_tr_cache';
+
+	/**
+	 * Liste des langues disponibles pour le partage par réseau.
+	 * La clé '' correspond à "Langue originale" (pas de traduction).
+	 *
+	 * @return array<string,string> code ISO => libellé
+	 */
+	private static function available_share_languages(): array {
+		return [
+			''   => 'Langue originale',
+			'en' => 'English',
+			'fr' => 'Français',
+			'es' => 'Español',
+			'de' => 'Deutsch',
+			'it' => 'Italiano',
+			'pt' => 'Português',
+			'nl' => 'Nederlands',
+			'pl' => 'Polski',
+			'ru' => 'Русский',
+			'ja' => '日本語',
+			'zh' => '中文',
+			'ar' => 'العربية',
+			'hi' => 'हिन्दी',
+		];
+	}
+
+	/**
+	 * Providers de traduction supportés.
+	 *
+	 * @return array<string,string>
+	 */
+	private static function translate_providers(): array {
+		return [
+			'none'         => 'Aucun — traduction désactivée',
+			'deepl'        => 'DeepL (gratuit 500k chars/mois, CB requise)',
+			'mymemory'     => 'MyMemory (gratuit sans CB, 5k/jour anon)',
+			'gemini'       => 'Google Gemini (free tier généreux)',
+			'zai_glm'      => 'ZAI / GLM (GLM-4-Flash gratuit)',
+			'opencode'     => 'OpenCode ZEN (free models dispo, fallback idéal)',
+			'openai_compat'=> 'OpenAI-compat local (LM Studio, mlx_lm, llama.cpp…)',
+			'apple_native' => 'Apple FoundationModels (macOS 26+, local)',
+		];
+	}
+
+	/**
+	 * Langue source par défaut : déduite du locale WordPress si non configurée.
+	 */
+	private static function detect_source_language(array $opt): string {
+		$configured = trim((string)($opt['translate_source_lang'] ?? ''));
+		if ($configured !== '') {
+			return $configured;
+		}
+		$locale = (string)get_locale();
+		$short = substr($locale, 0, 2);
+		$allowed = array_keys(self::available_share_languages());
+		return in_array($short, $allowed, true) ? $short : 'en';
+	}
+
+	/**
+	 * Wrapper : renvoie la traduction depuis le cache si valide (hash du contenu),
+	 * sinon appelle le provider configuré, cache, et renvoie.
+	 * En cas d'erreur, log et renvoie le texte original pour ne jamais bloquer le partage.
+	 *
+	 * @param int    $post_id  Post ID (pour le cache).
+	 * @param string $field    Clé logique du champ ('title' ou 'excerpt').
+	 * @param string $text     Texte à traduire.
+	 * @param string $target_lang Code ISO cible (ex: 'en').
+	 * @param array  $opt      Options plugin.
+	 * @return string Texte traduit (ou original en cas d'échec).
+	 */
+	private static function maybe_translate_field(int $post_id, string $field, string $text, string $target_lang, array $opt): string {
+		$text = trim($text);
+		if ($text === '' || $target_lang === '') {
+			return $text;
+		}
+		$provider = (string)($opt['translate_provider'] ?? 'none');
+		if ($provider === 'none') {
+			return $text;
+		}
+		$source_lang = self::detect_source_language($opt);
+		if ($target_lang === $source_lang) {
+			return $text;
+		}
+
+		// Cache par hash de contenu : si l'article change, sha change, traduction refaite.
+		$hash = hash('sha256', $text);
+		$cache = get_post_meta($post_id, self::META_TR_CACHE, true);
+		if (!is_array($cache)) {
+			$cache = [];
+		}
+		$cached_entry = $cache[$target_lang][$field] ?? null;
+		if (is_array($cached_entry) && ($cached_entry['hash'] ?? '') === $hash) {
+			return (string)($cached_entry['text'] ?? $text);
+		}
+
+		$translated = self::dispatch_translation($text, $source_lang, $target_lang, $provider, $opt);
+		if (is_wp_error($translated)) {
+			$msg = $translated->get_error_message();
+			self::update_options([
+				'last_translate_error' => '[' . $provider . '] ' . $msg,
+				'last_translate_error_at' => time(),
+			]);
+			self::debug_log_event("Translation failed ({$provider}, {$source_lang}→{$target_lang}): {$msg}");
+			return $text; // fallback non bloquant
+		}
+
+		$translated = trim($translated);
+		if ($translated === '') {
+			return $text;
+		}
+
+		$cache[$target_lang][$field] = ['hash' => $hash, 'text' => $translated, 'ts' => time()];
+		update_post_meta($post_id, self::META_TR_CACHE, $cache);
+		self::update_options(['last_translate_ok_at' => time()]);
+		return $translated;
+	}
+
+	/**
+	 * Dispatcher vers le bon adapter selon le provider.
+	 *
+	 * @return string|WP_Error
+	 */
+	private static function dispatch_translation(string $text, string $source, string $target, string $provider, array $opt) {
+		switch ($provider) {
+			case 'deepl':
+				return self::translate_via_deepl($text, $source, $target, $opt);
+			case 'mymemory':
+				return self::translate_via_mymemory($text, $source, $target, $opt);
+			case 'gemini':
+				return self::translate_via_openai_compat($text, $source, $target, [
+					'endpoint' => rtrim((string)($opt['translate_gemini_model'] ?? 'gemini-1.5-flash'), '/') !== ''
+						? 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode((string)$opt['translate_gemini_model']) . ':generateContent?key=' . rawurlencode((string)$opt['translate_gemini_key'])
+						: '',
+					'key' => '',
+					'model' => '',
+					'format' => 'gemini',
+				], $opt);
+			case 'zai_glm':
+				return self::translate_via_openai_compat($text, $source, $target, [
+					'endpoint' => rtrim((string)($opt['translate_zai_endpoint'] ?? 'https://open.bigmodel.cn/api/paas/v4'), '/') . '/chat/completions',
+					'key' => (string)($opt['translate_zai_key'] ?? ''),
+					'model' => (string)($opt['translate_zai_model'] ?? 'glm-4-flash'),
+					'format' => 'openai',
+				], $opt);
+			case 'opencode':
+				$oc_base = rtrim((string)($opt['translate_opencode_endpoint'] ?? ''), '/');
+				if ($oc_base === '') {
+					$oc_base = 'https://opencode.ai/zen/v1';
+				}
+				return self::translate_via_openai_compat($text, $source, $target, [
+					'endpoint' => $oc_base . '/chat/completions',
+					'key' => (string)($opt['translate_opencode_key'] ?? ''),
+					'model' => (string)($opt['translate_opencode_model'] ?? ''),
+					'format' => 'openai',
+				], $opt);
+			case 'openai_compat':
+				return self::translate_via_openai_compat($text, $source, $target, [
+					'endpoint' => rtrim((string)($opt['translate_openai_compat_endpoint'] ?? 'http://127.0.0.1:1234/v1'), '/') . '/chat/completions',
+					'key' => (string)($opt['translate_openai_compat_key'] ?? ''),
+					'model' => (string)($opt['translate_openai_compat_model'] ?? ''),
+					'format' => 'openai',
+				], $opt);
+			case 'apple_native':
+				return self::translate_via_apple_native($text, $source, $target, $opt);
+			case 'none':
+			default:
+				return $text;
+		}
+	}
+
+	/**
+	 * DeepL API (free ou pro selon translate_deepl_free).
+	 * Doc : https://www.deepl.com/fr/docs-api/api-reference/
+	 *
+	 * @return string|WP_Error
+	 */
+	private static function translate_via_deepl(string $text, string $source, string $target, array $opt) {
+		$key = trim((string)($opt['translate_deepl_key'] ?? ''));
+		if ($key === '') {
+			return new WP_Error('pkliap_tr_deepl_nokey', 'DeepL : clé API manquante.');
+		}
+		// DeepL exige un suffixe ":fx" sur la clé du compte gratuit.
+		if (!empty($opt['translate_deepl_free']) && substr($key, -3) !== ':fx') {
+			$key .= ':fx';
+		}
+		$host = !empty($opt['translate_deepl_free']) ? 'https://api-free.deepl.com' : 'https://api.deepl.com';
+
+		$res = wp_remote_post($host . '/v2/translate', [
+			'timeout' => 20,
+			'headers' => [
+				'Authorization' => 'DeepL-Auth-Key ' . $key,
+				'Content-Type' => 'application/x-www-form-urlencoded',
+			],
+			'body' => http_build_query([
+				'text' => $text,
+				'source_lang' => strtoupper($source),
+				'target_lang' => strtoupper($target),
+			]),
+		]);
+		if (is_wp_error($res)) {
+			return new WP_Error('pkliap_tr_deepl_network', 'DeepL réseau : ' . $res->get_error_message());
+		}
+		$code = (int)wp_remote_retrieve_response_code($res);
+		$body = json_decode((string)wp_remote_retrieve_body($res), true);
+		if ($code !== 200 || !is_array($body)) {
+			return new WP_Error('pkliap_tr_deepl_http', 'DeepL HTTP ' . $code . ' : ' . substr((string)wp_remote_retrieve_body($res), 0, 200));
+		}
+		$translated = (string)($body['translations'][0]['text'] ?? '');
+		if ($translated === '') {
+			return new WP_Error('pkliap_tr_deepl_empty', 'DeepL : réponse vide.');
+		}
+		return $translated;
+	}
+
+	/**
+	 * MyMemory : gratuit, pas de clé ni CB (email optionnelle pour quota 50k/jour).
+	 * Doc : https://mymemory.translated.net/doc/spec.php
+	 *
+	 * @return string|WP_Error
+	 */
+	private static function translate_via_mymemory(string $text, string $source, string $target, array $opt) {
+		$email = trim((string)($opt['translate_mymemory_email'] ?? ''));
+		$params = [
+			'q' => $text,
+			'langpair' => $source . '|' . $target,
+		];
+		if ($email !== '' && is_email($email)) {
+			$params['de'] = $email;
+		}
+		$url = 'https://api.mymemory.translated.net/get?' . http_build_query($params);
+		$res = wp_remote_get($url, ['timeout' => 20]);
+		if (is_wp_error($res)) {
+			return new WP_Error('pkliap_tr_mm_network', 'MyMemory réseau : ' . $res->get_error_message());
+		}
+		$code = (int)wp_remote_retrieve_response_code($res);
+		$body = json_decode((string)wp_remote_retrieve_body($res), true);
+		if ($code !== 200 || !is_array($body)) {
+			return new WP_Error('pkliap_tr_mm_http', 'MyMemory HTTP ' . $code);
+		}
+		$translated = (string)($body['responseData']['translatedText'] ?? '');
+		if ($translated === '' || stripos($translated, 'MYMEMORY WARNING') !== false || stripos($translated, 'INVALID') !== false) {
+			return new WP_Error('pkliap_tr_mm_empty', 'MyMemory : ' . $translated);
+		}
+		return $translated;
+	}
+
+	/**
+	 * Adapter générique OpenAI-compatible (chat/completions).
+	 * Couvre OpenAI, Azure, LM Studio, mlx_lm, llama.cpp, Jan, GPT4All, ZAI, OpenCode, …
+	 *
+	 * Format "openai" : endpoint /chat/completions, body { model, messages, ... }.
+	 * Format "gemini" : endpoint direct :generateContent, body { contents: [{ parts: [{ text }] }] }.
+	 *
+	 * @param array{endpoint:string,key:string,model:string,format:string} $cfg
+	 * @return string|WP_Error
+	 */
+	private static function translate_via_openai_compat(string $text, string $source, string $target, array $cfg, array $opt) {
+		// Rate limiter global (transient) : 3s minimum entre chaque appel API.
+		// Évite les 429 / degraded responses de Gemini quand on flood en catch-up.
+		$last_call = (float)get_transient('pkliap_tr_rate_limit');
+		if ($last_call > 0) {
+			$sleep = 3 - (microtime(true) - $last_call);
+			if ($sleep > 0) {
+				usleep((int)min($sleep * 1_000_000, 5_000_000));
+			}
+		}
+		set_transient('pkliap_tr_rate_limit', microtime(true), 30);
+
+		$endpoint = trim((string)($cfg['endpoint'] ?? ''));
+		if ($endpoint === '') {
+			return new WP_Error('pkliap_tr_oc_noendpoint', 'Endpoint manquant.');
+		}
+		// Prompt minimal — évite que le modèle reformule et recrache les instructions.
+		$sys_prompt = 'Translate the text below to language "' . $target . '". Only output the translation, nothing else.';
+
+		$format = (string)($cfg['format'] ?? 'openai');
+		if ($format === 'gemini') {
+			// system_instruction sépare le prompt du contenu utilisateur.
+			// Même si Gemini délire, le prompt ne peut pas fuiter dans la sortie.
+			$body = [
+				'system_instruction' => [
+					'parts' => [['text' => $sys_prompt]],
+				],
+				'contents' => [[
+					'role' => 'user',
+					'parts' => [['text' => $text]],
+				]],
+				'generationConfig' => ['temperature' => 0.2, 'maxOutputTokens' => 1024],
+			];
+			$headers = ['Content-Type' => 'application/json'];
+		} else {
+			$body = [
+				'model' => (string)($cfg['model'] ?? ''),
+				'messages' => [
+					['role' => 'system', 'content' => $sys_prompt],
+					['role' => 'user', 'content' => $text],
+				],
+				'temperature' => 0.2,
+				'stream' => false,
+			];
+			$headers = ['Content-Type' => 'application/json'];
+			if ((string)($cfg['key'] ?? '') !== '') {
+				$headers['Authorization'] = 'Bearer ' . (string)$cfg['key'];
+			}
+		}
+
+		// Retry avec backoff exponentiel pour les erreurs transitoires (503, 429, …).
+		// Gemini/ZEN peuvent retourner 503 "high demand" — on relance automatiquement.
+		$max_retries = 3;
+		$retry_codes = [429, 500, 502, 503, 504];
+		$res = null;
+		$code = 0;
+		$raw = '';
+		$json = null;
+		for ($attempt = 1; $attempt <= $max_retries; $attempt++) {
+			$res = wp_remote_post($endpoint, [
+				'timeout' => 60,
+				'headers' => $headers,
+				'body' => wp_json_encode($body),
+			]);
+			if (is_wp_error($res)) {
+				if ($attempt < $max_retries) {
+					usleep($attempt * 2000000); // 2s, 4s
+					continue;
+				}
+				return new WP_Error('pkliap_tr_oc_network', 'Réseau : ' . $res->get_error_message());
+			}
+			$code = (int)wp_remote_retrieve_response_code($res);
+			$raw = (string)wp_remote_retrieve_body($res);
+			$json = json_decode($raw, true);
+			if ($code === 200 && is_array($json)) {
+				break; // succès
+			}
+			if (in_array($code, $retry_codes, true) && $attempt < $max_retries) {
+				self::debug_log_event("Translation HTTP {$code} (attempt {$attempt}/{$max_retries}), retry in " . ($attempt * 2) . "s…");
+				usleep($attempt * 2000000); // 2s, 4s
+				continue;
+			}
+			return new WP_Error('pkliap_tr_oc_http', 'HTTP ' . $code . ' : ' . substr($raw, 0, 240));
+		}
+
+		$translated = '';
+		if ($format === 'gemini') {
+			$translated = (string)($json['candidates'][0]['content']['parts'][0]['text'] ?? '');
+		} else {
+			$translated = (string)($json['choices'][0]['message']['content'] ?? '');
+		}
+		// Nettoyage : certains LLM entourent la réponse de guillemets.
+		$translated = trim($translated);
+		if ($translated !== '' && in_array(substr($translated, 0, 1), ['"', "'", '`'], true) && in_array(substr($translated, -1), ['"', "'", '`'], true)) {
+			$translated = trim(substr($translated, 1, -1));
+		}
+		if ($translated === '') {
+			return new WP_Error('pkliap_tr_oc_empty', 'Réponse vide du modèle.');
+		}
+		// Anti-fuite prompt : si la réponse contient des mots-clés du prompt, c'est que le
+		// modèle a recraché les instructions au lieu de traduire → on rejette.
+		$leak_patterns = [
+			'professional translator', 'target language', 'source language', 'iso language',
+			'reply only', 'respond only', 'reply with',
+			'no quotes', 'no comments', 'no prefixes', 'no explanations',
+			'only output the translation', 'translate the text below',
+			'traducteur professionnel', 'texte à traduire', 'réponds uniquement',
+			'you are a', 'role:', 'constraint:', 'instruction:',
+		];
+		$lower = strtolower($translated);
+		foreach ($leak_patterns as $p) {
+			if (strpos($lower, $p) !== false) {
+				self::debug_log_event("Translation rejected (prompt leak detected): " . substr($translated, 0, 120));
+				return new WP_Error('pkliap_tr_oc_leak', 'Prompt leak détecté — le modèle a recraché les instructions au lieu de traduire.');
+			}
+		}
+		return $translated;
+	}
+
+	/**
+	 * Apple FoundationModels via helper local compilé (macOS 26+).
+	 * Lit le texte + langues sur stdin (JSON), renvoie la traduction sur stdout (JSON).
+	 *
+	 * @return string|WP_Error
+	 */
+	private static function translate_via_apple_native(string $text, string $source, string $target, array $opt) {
+		$binary = trim((string)($opt['translate_apple_binary'] ?? ''));
+		if ($binary === '') {
+			// Auto-detection d'un helper sibling typique.
+			$candidates = [
+				dirname(__DIR__) . '/tools/translator/apple-translator/apple-translator',
+				ABSPATH . '../tools/translator/apple-translator/apple-translator',
+			];
+			foreach ($candidates as $c) {
+				if (file_exists($c) && is_executable($c)) {
+					$binary = $c;
+					break;
+				}
+			}
+		}
+		if ($binary === '' || !file_exists($binary) || !is_executable($binary)) {
+			return new WP_Error('pkliap_tr_apple_nobinary', 'Helper Apple introuvable. Compile tools/translator/apple-translator/build.sh puis renseigne le chemin.');
+		}
+
+		$payload = wp_json_encode([
+			'text' => $text,
+			'source' => $source,
+			'target' => $target,
+		]);
+
+		$cmd = escapeshellarg($binary);
+		$descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+		$proc = @proc_open($cmd, $descriptors, $pipes);
+		if (!is_resource($proc)) {
+			return new WP_Error('pkliap_tr_apple_spawn', 'proc_open failed pour ' . $binary);
+		}
+		fwrite($pipes[0], $payload);
+		fclose($pipes[0]);
+		$stdout = (string)stream_get_contents($pipes[1]);
+		fclose($pipes[1]);
+		$stderr = (string)stream_get_contents($pipes[2]);
+		fclose($pipes[2]);
+		$status = proc_close($proc);
+		if ($status !== 0) {
+			return new WP_Error('pkliap_tr_apple_exit', 'Helper exit=' . $status . ' : ' . trim($stderr));
+		}
+		$json = json_decode($stdout, true);
+		if (!is_array($json) || !isset($json['text'])) {
+			return new WP_Error('pkliap_tr_apple_parse', 'Helper stdout invalide : ' . substr($stdout, 0, 240));
+		}
+		$translated = trim((string)$json['text']);
+		if ($translated === '') {
+			return new WP_Error('pkliap_tr_apple_empty', 'Helper : traduction vide.');
+		}
+		return $translated;
+	}
+
+	/**
+	 * Test de traduction (depuis le bouton "Tester" du Dashboard).
+	 * Traduit un échantillon fixe FR→EN et renvoie un statut + extrait.
+	 *
+	 * @return array{ok:bool,message:string,provider:string,input:string,output:string}
+	 */
+	private static function run_translate_test(array $opt): array {
+		$provider = (string)($opt['translate_provider'] ?? 'none');
+		if ($provider === 'none') {
+			return ['ok' => false, 'provider' => $provider, 'message' => 'Aucun provider configuré.', 'input' => '', 'output' => ''];
+		}
+		$sample = 'Bienvenue sur mon blog. Cet article explique comment automatiser la publication sur les réseaux sociaux.';
+		$source = 'fr';
+		$target = 'en';
+		$res = self::dispatch_translation($sample, $source, $target, $provider, $opt);
+		if (is_wp_error($res)) {
+			return ['ok' => false, 'provider' => $provider, 'message' => $res->get_error_message(), 'input' => $sample, 'output' => ''];
+		}
+		return ['ok' => true, 'provider' => $provider, 'message' => 'Traduction réussie (' . $source . '→' . $target . ').', 'input' => $sample, 'output' => (string)$res];
 	}
 }
 

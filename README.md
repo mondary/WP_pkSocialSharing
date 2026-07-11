@@ -111,6 +111,12 @@ Mise à jour live :
 
 ## 🧾 Changelog
 
+- `1.2.5` : correctif endpoint OpenCode ZEN par défaut (`https://opencode.ai/zen/v1`) quand vide en base ; UI OpenCode ZEN simplifiée (clé + bouton rafraîchir modèles + dropdown).
+- `1.2.4` : correctif critique — le prompt de traduction ne fuit plus dans les tweets (`system_instruction` pour Gemini) ; séparation propre prompt système / contenu utilisateur pour tous les LLM ; détection anti-fuite (rejet si la traduction contient des mots-clés du prompt) ; prompt simplifié en anglais.
+- `1.2.3` : retry auto (3× backoff exponentiel) sur erreurs transitoires Gemini/ZEN (HTTP 429/500/502/503/504) ; provider OpenCode renommé OpenCode ZEN ; bouton « Rafraîchir les modèles » + suggestions de modèles gratuits ZEN ; runner X : ajout User-Agent navigateur (fix 403 WAF) + timeout `wpCall` 60 s.
+- `1.2.2` : correctif onglet X — les URL `x.com/intent` sont générées uniquement au clic pour éviter les appels traduction en masse à l’affichage du tableau de test.
+- `1.2.1` : correctif MyMemory (paramètre `email` optionnel, ne plus envoyer de `de` vide) ; dropdown des modèles Gemini récupérés via ListModels API + bouton Rafraîchir ; défaut Gemini `gemini-2.0-flash` (`gemini-1.5-flash` déprécié).
+- `1.2.0` : traduction automatique par réseau — chaque onglet réseau choisit sa langue cible ; providers DeepL, MyMemory, Gemini, ZAI/GLM, OpenCode, OpenAI-compat local (LM Studio/mlx_lm/llama.cpp) et Apple FoundationModels natif macOS 26+ ; cache par hash de contenu.
 - `1.1.9` : runner navigateur X — queue REST authentifiée par token + plafond quotidien, automatisable via un cron `launchd` sur ton Mac (zéro crédit API).
 - `1.1.8` : partage X via navigateur sans doublon d’URL quand l’article est déjà inclus dans le texte.
 - `1.1.7` : partage X via navigateur avec URL de l’article dans l’intent pour restaurer l’unfurl Open Graph.
@@ -132,4 +138,5 @@ Mise à jour live :
 
 - EN README : [README_en.md](README_en.md)
 - Runner navigateur X (CDP) : [tools/runner/README.md](tools/runner/README.md)
+- Helper Apple FoundationModels (traduction) : [tools/translator/apple-translator/README.md](tools/translator/apple-translator/README.md)
 - Plugin source : [src/pk-linkedin-autopublish](src/pk-linkedin-autopublish)

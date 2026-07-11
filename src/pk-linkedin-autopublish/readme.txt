@@ -4,7 +4,7 @@ Tags: linkedin, facebook, instagram, threads, medium, x, twitter, social, autopu
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.1.9
+Stable tag: 1.2.2
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram, Threads et Medium lors de la publication.
@@ -43,6 +43,22 @@ Fonctionnalites :
 * Medium necessite un integration token disponible dans les reglages Medium du compte.
 
 == Changelog ==
+
+= 1.2.2 =
+* Fix onglet X: ne plus generer toutes les URL x.com/intent a l'affichage pour eviter les appels traduction en masse
+* Le lien "Publier via navigateur" genere maintenant l'intent X uniquement au clic
+
+= 1.2.1 =
+* Fix MyMemory: parametre email optionnel (ne plus envoyer de=vide)
+* Dropdown des modeles Gemini recuperes via ListModels API + bouton Rafraichir
+* Defaut Gemini: gemini-2.0-flash (gemini-1.5-flash deprécié)
+
+= 1.2.0 =
+* Traduction automatique par reseau: chaque onglet reseau choisit sa langue cible
+* Providers: DeepL, MyMemory (gratuit sans CB), Gemini, ZAI/GLM, OpenCode, OpenAI-compat local (LM Studio/mlx_lm/llama.cpp) et Apple FoundationModels natif macOS 26+
+* Cache de traduction par hash de contenu (1 traduction par version d'article)
+* Section de configuration globale dans le Dashboard + bouton de test
+* Helper Swift apple-translator pour Apple FoundationModels (tools/translator/apple-translator/)
 
 = 1.1.9 =
 * Runner navigateur X: queue REST + token + plafond quotidien pour automatiser le partage X via un cron local sur ton Mac sans credits API
@@ -128,6 +144,23 @@ Fonctionnalites :
 = 0.78 =
 * Facebook publie maintenant l'image mise en avant via l'endpoint photos quand elle existe
 * Fallback conserve le partage lien classique quand aucun visuel n'est disponible
+
+= 1.2.5 =
+* FIX : endpoint OpenCode ZEN par défaut quand vide en base (https://opencode.ai/zen/v1)
+* UI OpenCode ZEN simplifiée : clé + bouton rafraîchir modèles + dropdown (comme Gemini)
+
+= 1.2.4 =
+* FIX CRITIQUE : le prompt de traduction ne fuit plus dans les tweets (system_instruction pour Gemini)
+* Séparation propre prompt système / contenu utilisateur pour tous les LLM
+* Détection anti-fuite : si la traduction contient des mots-clés du prompt, elle est rejetée
+* Prompt simplifié en anglais (meilleure obéissance des modèles)
+
+= 1.2.3 =
+* Retry auto (3× backoff exponentiel) sur erreurs transitoires Gemini/ZEN (HTTP 429/500/502/503/504)
+* Provider OpenCode renomme en OpenCode ZEN avec endpoint par defaut https://opencode.ai/zen/v1
+* Ajout du bouton « Rafraîchir les modèles » pour OpenCode ZEN (fetch /v1/models + dropdown)
+* Suggestion des modèles gratuits ZEN : gpt-5-nano, deepseek-v4-flash-free, mimo-v2.5-free, etc.
+* Runner X : ajout User-Agent navigateur (fix 403 WAF) + timeout wpCall 60s
 
 = 0.77 =
 * Reglages Facebook alignes sur Instagram avec lien Graph Explorer et requete a lancer dans les champs
