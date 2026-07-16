@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.2.5
+ * Version: 1.2.6
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -476,7 +476,8 @@ final class PKLIAP_Plugin {
 
 	public static function rest_x_browser_next(WP_REST_Request $request): WP_REST_Response {
 		$opt = self::get_options();
-		if (self::x_browser_daily_count($opt) >= (int)$opt['x_browser_daily_cap']) {
+		$bypass_cap = !empty($request->get_param('bypass_cap'));
+		if (!$bypass_cap && self::x_browser_daily_count($opt) >= (int)$opt['x_browser_daily_cap']) {
 			self::x_browser_record_run('daily_cap_reached');
 			return new WP_REST_Response(['empty' => true, 'reason' => 'daily_cap'], 200);
 		}
@@ -492,7 +493,7 @@ final class PKLIAP_Plugin {
 			'post_type' => $post_types,
 			'post_status' => 'publish',
 			'fields' => 'ids',
-			'posts_per_page' => 50,
+			'posts_per_page' => $bypass_cap ? 200 : 50,
 			'orderby' => 'date',
 			'order' => 'DESC',
 			'no_found_rows' => true,
@@ -4553,7 +4554,7 @@ final class PKLIAP_Plugin {
 		$count = $alerts ? count($alerts) : 0;
 
 		// Node toujours visible : raccourci vers la page PK SocialSharing.
-		$label = '<span class="pkliap-adminbar-label">PK SocialSharing</span>';
+		$label = '<span class="ab-icon dashicons dashicons-share"></span>';
 		if ($count > 0) {
 			$label .= '<span class="pkliap-badge" aria-hidden="true">' . esc_html((string)$count) . '</span>';
 		}
@@ -4586,10 +4587,10 @@ final class PKLIAP_Plugin {
 				overflow:hidden !important;
 				color:#fff !important;
 			}
-			#wp-admin-bar-pkliap-alerts > a.ab-item .pkliap-adminbar-label{
-				color:#fff !important;
-				font-size:12px;
-				font-weight:600;
+			#wp-admin-bar-pkliap-alerts > a.ab-item .ab-icon.dashicons-share{
+				font-size:18px;
+				width:20px;
+				height:20px;
 				line-height:1;
 				flex:0 0 auto;
 			}

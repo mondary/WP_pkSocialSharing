@@ -111,6 +111,7 @@ Mise à jour live :
 
 ## 🧾 Changelog
 
+- `1.2.6` : admin bar — texte `PK SocialSharing` remplacé par une icône dashicons.
 - `1.2.5` : correctif endpoint OpenCode ZEN par défaut (`https://opencode.ai/zen/v1`) quand vide en base ; UI OpenCode ZEN simplifiée (clé + bouton rafraîchir modèles + dropdown).
 - `1.2.4` : correctif critique — le prompt de traduction ne fuit plus dans les tweets (`system_instruction` pour Gemini) ; séparation propre prompt système / contenu utilisateur pour tous les LLM ; détection anti-fuite (rejet si la traduction contient des mots-clés du prompt) ; prompt simplifié en anglais.
 - `1.2.3` : retry auto (3× backoff exponentiel) sur erreurs transitoires Gemini/ZEN (HTTP 429/500/502/503/504) ; provider OpenCode renommé OpenCode ZEN ; bouton « Rafraîchir les modèles » + suggestions de modèles gratuits ZEN ; runner X : ajout User-Agent navigateur (fix 403 WAF) + timeout `wpCall` 60 s.

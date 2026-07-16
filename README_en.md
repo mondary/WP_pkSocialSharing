@@ -111,6 +111,7 @@ Live update:
 
 ## 🧾 Changelog
 
+- `1.2.6`: admin bar — replaced `PK SocialSharing` text with a dashicons icon.
 - `1.1.9`: X browser runner — token-authenticated REST queue + daily cap to automate X sharing via a local cron on your Mac without API credits.
 - `1.1.8`: X browser share avoids duplicate URLs when the article is already included in the text.
 - `1.1.7`: X browser share now includes the article URL in the intent to restore Open Graph unfurling.
