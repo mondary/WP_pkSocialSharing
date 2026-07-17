@@ -1,18 +1,17 @@
 #!/usr/bin/env node
 // pk-x-catchup.js — ONE-SHOT: rattrape le retard X en une fois.
 //
-// Bypass le plafond quotidien SANS modifier la règle WP:
-//   1. énumère la queue via /next SANS appeler /done → le compteur quotidien
-//      reste à 0 → le cap (daily_cap) ne bloque jamais /next.
-//   2. publie chaque article dans Canary via CDP (clic auto).
-//   3. marque /done uniquement à la toute fin (le cap ne bloque pas /done).
+// Utilise uniquement /next pour l'énumération (texte traduit, templates respectés).
+// Si le plafond quotidien est atteint, il attend et réessaie.
 //
-// Lance Chrome Canary si besoin. Ne change aucune option WordPress.
-// Usage: node tools/runner/pk-x-catchup.js   (PK_PAUSE_MS=20000 par défaut)
+// Usage: node tools/runner/pk-x-catchup.js
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+
+process.on('uncaughtException', e => { log(`UNCAUGHT: ${e.message}`); process.exit(9); });
+process.on('unhandledRejection', r => { log(`UNHANDLED REJECTION: ${r}`); process.exit(9); });
 
 const CONFIG_PATH = process.env.PK_RUNNER_CONF || path.join(process.env.HOME || '/root', '.config', 'pk-x-runner.json');
 const LOG_PATH = process.env.PK_RUNNER_LOG || path.join(process.env.HOME || '/root', '.local', 'log', 'pk-x-runner.log');
@@ -82,11 +81,10 @@ async function checkXSession(browser) {
 	try {
 		await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 });
 		await sleep(3500);
-		const url = page.url();
 		const loggedIn = await page.$('[data-testid="SideNav_NewTweet_Button"], [data-testid="AppTabBar_Home_Link"]');
-		if (!loggedIn || /\/login|\/i\/flow\/login|\/logout/.test(url)) {
+		if (!loggedIn || /\/login|\/i\/flow\/login|\/logout/.test(page.url())) {
 			log('ERREUR SESSION: pas connecté à X dans Canary.');
-			log('→ Ouvre Canary (start-chrome-macos.sh avec PK_VISIBLE=1), connecte-toi à x.com, puis relance ce script.');
+			log('→ Ouvre Canary, connecte-toi à x.com, puis relance.');
 			return false;
 		}
 		log('Session X: OK (connecté).');
@@ -94,14 +92,15 @@ async function checkXSession(browser) {
 	} finally { await page.close().catch(() => {}); }
 }
 
-// Phase 1: énumère la queue via /next SANS /done → compteur quotidien reste à 0,
-// donc /next n'est jamais bloqué par le cap.
-async function enumerateQueue(cfg) {
+async function enumerateViaNext(cfg) {
 	const items = [];
-	for (let i = 0; i < 200; i++) {
+	for (let i = 0; i < 100; i++) {
 		const r = await wpCall(cfg, 'GET', 'x-browser/next');
 		if (!r.ok) { log(`ERREUR /next HTTP ${r.status}: ${JSON.stringify(r.data)}`); break; }
-		if (r.data.empty) { log(`Queue: ${r.data.reason} — ${items.length} article(s) à publier.`); break; }
+		if (r.data.empty) {
+			log(`Queue: ${r.data.reason} — ${items.length} article(s) à publier.`);
+			break;
+		}
 		items.push({ post_id: r.data.post_id, title: r.data.title, intent_url: r.data.intent_url });
 	}
 	return items;
@@ -143,6 +142,7 @@ async function postOne(browser, item, cfg) {
 	for (const k of ['wp_url', 'runner_token', 'browser_url']) {
 		if (!cfg[k]) { log(`ERREUR: champ "${k}" manquant dans ${CONFIG_PATH}`); process.exit(2); }
 	}
+
 	const betweenMs = parseInt(process.env.PK_PAUSE_MS || '20000', 10);
 
 	await ensureCanary(cfg);
@@ -152,8 +152,8 @@ async function postOne(browser, item, cfg) {
 
 	if (!(await checkXSession(browser))) { await browser.disconnect().catch(() => {}); process.exit(4); }
 
-	log('=== CATCH-UP X — énumération de la queue (sans /done, cap non bloqué) ===');
-	const items = await enumerateQueue(cfg);
+	log('=== CATCH-UP X — énumération via /next (texte traduit) ===');
+	const items = await enumerateViaNext(cfg);
 	if (items.length === 0) { log('Rien à rattraper.'); await browser.disconnect().catch(() => {}); process.exit(0); }
 
 	log(`=== ${items.length} article(s) à publier — pause ${betweenMs}ms entre chaque ===`);
@@ -171,7 +171,6 @@ async function postOne(browser, item, cfg) {
 		} else {
 			failed.push({ id: item.post_id, reason: res.reason });
 			log(`  #${item.post_id} ÉCHEC: ${res.reason}`);
-			// Libère le claim pour qu'un retry futur le reprenne.
 			await wpCall(cfg, 'POST', 'x-browser/release', { post_id: item.post_id }).catch(() => {});
 			consecFail++;
 			if (consecFail >= 3) {
