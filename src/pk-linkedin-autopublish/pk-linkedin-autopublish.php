@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.2.6
+ * Version: 1.3.1
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -24,6 +24,7 @@ final class PKLIAP_Plugin {
 	const OPT_TOKEN_EXP = 'pkliap_access_token_expires_at';
 	const OPT_REFRESH = 'pkliap_refresh_token';
 	const OPT_REFRESH_EXP = 'pkliap_refresh_token_expires_at';
+	const OPT_TRANSLATE_OK_AT = 'pkliap_translate_ok_at';
 	const META_SHARED_AT = '_pkliap_shared_at';
 	const META_SHARE_URN = '_pkliap_linkedin_urn';
 	const META_X_SHARED_AT = '_pkliap_x_shared_at';
@@ -867,7 +868,8 @@ final class PKLIAP_Plugin {
 			'translate_zai_model' => 'glm-4-flash',
 			'translate_zai_endpoint' => 'https://open.bigmodel.cn/api/paas/v4',
 			'translate_opencode_key' => '',
-			'translate_opencode_model' => '',
+			// Big Pickle is a current free Zen model and uses chat/completions.
+			'translate_opencode_model' => 'big-pickle',
 			'translate_opencode_endpoint' => 'https://opencode.ai/zen/v1',
 			'translate_openai_compat_endpoint' => 'http://127.0.0.1:1234/v1',
 			'translate_openai_compat_key' => '',
@@ -1067,9 +1069,12 @@ final class PKLIAP_Plugin {
 		} else {
 			$out['translate_provider'] = (string)$current['translate_provider'];
 		}
-		$out['translate_source_lang'] = array_key_exists('translate_source_lang', $value)
-			? substr(preg_replace('/[^a-z]/', '', strtolower((string)$value['translate_source_lang'])), 0, 5)
-			: (string)$current['translate_source_lang'];
+		if (array_key_exists('translate_source_lang', $value)) {
+			$source_lang = substr(preg_replace('/[^a-z]/', '', strtolower((string)$value['translate_source_lang'])), 0, 5);
+			$out['translate_source_lang'] = array_key_exists($source_lang, self::available_share_languages()) ? $source_lang : '';
+		} else {
+			$out['translate_source_lang'] = (string)$current['translate_source_lang'];
+		}
 		$out['translate_deepl_key'] = array_key_exists('translate_deepl_key', $value) ? sanitize_text_field((string)$value['translate_deepl_key']) : (string)$current['translate_deepl_key'];
 		$out['translate_deepl_free'] = array_key_exists('translate_deepl_free', $value) ? (empty($value['translate_deepl_free']) ? 0 : 1) : (int)$current['translate_deepl_free'];
 		$out['translate_mymemory_email'] = array_key_exists('translate_mymemory_email', $value) ? sanitize_email((string)$value['translate_mymemory_email']) : (string)$current['translate_mymemory_email'];
@@ -1169,6 +1174,9 @@ final class PKLIAP_Plugin {
 		}
 
 		$opt = self::get_options();
+		// Keep this timestamp outside the large settings array so a concurrent save
+		// cannot restore an older translation test time.
+		$last_translate_ok_at = max((int)$opt['last_translate_ok_at'], (int)get_option(self::OPT_TRANSLATE_OK_AT, 0));
 		$access_token_present = !empty($opt['access_token']);
 		$expires_at = (int)($opt['access_token_expires_at'] ?? 0);
 		$token_not_expired = ($expires_at <= 0) ? true : (time() < $expires_at);
@@ -1671,7 +1679,7 @@ final class PKLIAP_Plugin {
 													<?php endforeach; ?>
 												</select>
 											<?php else: ?>
-												<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_opencode_model]" value="<?php echo esc_attr($oc_current); ?>" placeholder="gpt-5-nano"/>
+												<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_opencode_model]" value="<?php echo esc_attr($oc_current); ?>" placeholder="big-pickle"/>
 											<?php endif; ?>
 										</label>
 										<a class="button button-secondary" style="margin-left:8px;vertical-align:top;" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_opencode_models'), 'pkliap_opencode_models')); ?>">Rafraîchir les modèles</a>
@@ -1712,14 +1720,14 @@ final class PKLIAP_Plugin {
 									<td>
 										<div class="pks-actions-row" style="margin-bottom:6px;">
 											<a class="button button-secondary" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_translate_test'), 'pkliap_translate_test')); ?>">Tester la traduction</a>
-											<?php if (!empty($opt['last_translate_ok_at'])): ?>
-												<span class="pks-pill pks-pill--ok">OK • <?php echo esc_html(wp_date('Y-m-d H:i', (int)$opt['last_translate_ok_at'])); ?></span>
+											<?php if ($last_translate_ok_at > 0): ?>
+												<span class="pks-pill pks-pill--ok">Dernier test réussi le <?php echo esc_html(wp_date('Y-m-d H:i:s', $last_translate_ok_at)); ?></span>
 											<?php endif; ?>
-											<?php if (!empty($opt['last_translate_error'])): ?>
+											<?php if (!empty($opt['last_translate_error']) && (int)$opt['last_translate_error_at'] > $last_translate_ok_at): ?>
 												<span class="pks-pill pks-pill--bad">Erreur • <?php echo esc_html(wp_date('Y-m-d H:i', (int)$opt['last_translate_error_at'])); ?></span>
 											<?php endif; ?>
 										</div>
-										<?php if (!empty($opt['last_translate_error'])): ?>
+										<?php if (!empty($opt['last_translate_error']) && (int)$opt['last_translate_error_at'] > $last_translate_ok_at): ?>
 											<p class="description" style="color:#b32d2e;"><?php echo esc_html((string)$opt['last_translate_error']); ?></p>
 										<?php endif; ?>
 									</td>
@@ -3917,7 +3925,9 @@ final class PKLIAP_Plugin {
 		$opt = self::get_options();
 		$result = self::run_translate_test($opt);
 		if ($result['ok']) {
-			self::update_options(['last_translate_error' => '', 'last_translate_error_at' => 0, 'last_translate_ok_at' => time()]);
+			$tested_at = time();
+			self::update_options(['last_translate_error' => '', 'last_translate_error_at' => 0, 'last_translate_ok_at' => $tested_at]);
+			update_option(self::OPT_TRANSLATE_OK_AT, $tested_at, false);
 			self::set_flash('notice', sprintf('Traduction OK (%s) : "%s" → "%s"', $result['provider'], $result['input'], $result['output']));
 		} else {
 			self::update_options(['last_translate_error' => $result['message'], 'last_translate_error_at' => time()]);
@@ -6796,12 +6806,34 @@ final class PKLIAP_Plugin {
 				if ($oc_base === '') {
 					$oc_base = 'https://opencode.ai/zen/v1';
 				}
-				return self::translate_via_openai_compat($text, $source, $target, [
-					'endpoint' => $oc_base . '/chat/completions',
-					'key' => (string)($opt['translate_opencode_key'] ?? ''),
-					'model' => (string)($opt['translate_opencode_model'] ?? ''),
-					'format' => 'openai',
-				], $opt);
+				$selected_model = trim((string)($opt['translate_opencode_model'] ?? '')) ?: 'big-pickle';
+				$available_models = get_transient('pkliap_opencode_models');
+				$fallback_models = is_array($available_models) ? $available_models : [
+					'big-pickle',
+					'deepseek-v4-flash-free',
+					'mimo-v2.5-free',
+					'nemotron-3-ultra-free',
+					'north-mini-code-free',
+				];
+				$model_candidates = array_values(array_unique(array_merge([$selected_model], array_map('strval', $fallback_models))));
+				$last_error = null;
+				foreach ($model_candidates as $model) {
+					$result = self::translate_via_openai_compat($text, $source, $target, [
+						'endpoint' => $oc_base . '/chat/completions',
+						'key' => (string)($opt['translate_opencode_key'] ?? ''),
+						'model' => $model,
+						'format' => 'openai',
+					], $opt);
+					if (!is_wp_error($result)) {
+						return $result;
+					}
+					$last_error = $result;
+					if (stripos($result->get_error_message(), 'model is disabled') === false) {
+						return $result;
+					}
+					self::debug_log_event('OpenCode model disabled, fallback attempted: ' . $model);
+				}
+				return $last_error ?: new WP_Error('pkliap_tr_oc_no_model', 'OpenCode : aucun modèle disponible.');
 			case 'openai_compat':
 				return self::translate_via_openai_compat($text, $source, $target, [
 					'endpoint' => rtrim((string)($opt['translate_openai_compat_endpoint'] ?? 'http://127.0.0.1:1234/v1'), '/') . '/chat/completions',
@@ -6919,6 +6951,9 @@ final class PKLIAP_Plugin {
 		if ($endpoint === '') {
 			return new WP_Error('pkliap_tr_oc_noendpoint', 'Endpoint manquant.');
 		}
+		if ($format === 'openai' && trim((string)($cfg['model'] ?? '')) === '') {
+			return new WP_Error('pkliap_tr_model_missing', 'Modèle manquant. Enregistre un modèle compatible avec cet endpoint.');
+		}
 		// Prompt minimal — évite que le modèle reformule et recrache les instructions.
 		$sys_prompt = 'Translate the text below to language "' . $target . '". Only output the translation, nothing else.';
 
@@ -6985,7 +7020,18 @@ final class PKLIAP_Plugin {
 				usleep($attempt * 2000000); // 2s, 4s
 				continue;
 			}
-			return new WP_Error('pkliap_tr_oc_http', 'HTTP ' . $code . ' : ' . substr($raw, 0, 240));
+			$error_message = '';
+			if (is_array($json)) {
+				$error_message = (string)($json['error']['message'] ?? $json['message'] ?? '');
+			}
+			if ($error_message === '') {
+				$error_message = wp_strip_all_tags($raw);
+			}
+			$error_message = trim(substr($error_message, 0, 240));
+			if ($code === 401 && stripos($error_message, 'model is disabled') !== false) {
+				$error_message .= ' OpenCode: ce modèle est désactivé pour cette clé/workspace; recharge la liste et choisis un modèle autorisé.';
+			}
+			return new WP_Error('pkliap_tr_oc_http', 'HTTP ' . $code . ' : ' . $error_message);
 		}
 
 		$translated = '';

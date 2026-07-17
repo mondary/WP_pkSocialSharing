@@ -111,6 +111,11 @@ Mise à jour live :
 
 ## 🧾 Changelog
 
+- `1.3.1` : horodatage du test stocké dans une option dédiée pour éviter qu’une sauvegarde concurrente restaure une ancienne heure.
+- `1.3.0` : l’état de traduction affiche la date et l’heure précises du dernier test réussi.
+- `1.2.9` : l’état de traduction affiche `Dernier test réussi` sans timestamp persistant ambigu.
+- `1.2.8` : l’état de traduction n’affiche plus une ancienne erreur après un test réussi.
+- `1.2.7` : version déployable du correctif traduction ; modèle OpenCode par défaut `big-pickle`, fallback automatique vers les autres modèles autorisés si OpenCode renvoie `Model is disabled`, et diagnostics API améliorés.
 - `1.2.6` : admin bar — texte `PK SocialSharing` remplacé par une icône dashicons.
 - `1.2.5` : correctif endpoint OpenCode ZEN par défaut (`https://opencode.ai/zen/v1`) quand vide en base ; UI OpenCode ZEN simplifiée (clé + bouton rafraîchir modèles + dropdown).
 - `1.2.4` : correctif critique — le prompt de traduction ne fuit plus dans les tweets (`system_instruction` pour Gemini) ; séparation propre prompt système / contenu utilisateur pour tous les LLM ; détection anti-fuite (rejet si la traduction contient des mots-clés du prompt) ; prompt simplifié en anglais.
