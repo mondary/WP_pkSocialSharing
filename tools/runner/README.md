@@ -101,29 +101,25 @@ le tweet est publié automatiquement, puis l'onglet se ferme.
 
 ### 6. Automatiser avec launchd (Chrome Canary + runner)
 
-Deux plists à charger : (a) **Chrome Canary** en CDP persistant au login, (b) le
-**runner** qui déclenche aux heures de publication (10:05, 11:05, 12:05, 13:05, 14:05 —
-5 déclenchements/jour alignés sur le plafond du plugin).
+Les fichiers launchd sont pré-configurés dans `~/.local/config/`. Utiliser `tools/runner/runnerctl.sh` pour la gestion :
 
 ```bash
-# (a) Chrome Canary toujours prêt sur le port 9222
-cp tools/runner/com.pk.chrome-canary-cdp.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.pk.chrome-canary-cdp.plist
+# Installer les services launchd (une seule fois)
+./tools/runner/runnerctl.sh start
 
-# (b) Le runner aux heures de publication
-RUNNER_DIR="$(pwd)/tools/runner"
-sed "s|__RUNNER_DIR__|$RUNNER_DIR|g" tools/runner/com.pk.x-runner.plist \
-  > ~/Library/LaunchAgents/com.pk.x-runner.plist
-launchctl load ~/Library/LaunchAgents/com.pk.x-runner.plist
+# Voir le statut
+./tools/runner/runnerctl.sh status
 
-launchctl list | grep com.pk
+# Suivre les logs en temps réel
+./tools/runner/runnerctl.sh logs
+
+# Redémarrer les services
+./tools/runner/runnerctl.sh restart
 ```
 
-Arrêter :
-```bash
-launchctl unload ~/Library/LaunchAgents/com.pk.x-runner.plist
-launchctl unload ~/Library/LaunchAgents/com.pk.chrome-canary-cdp.plist
-```
+Le runner X se déclenche aux heures de publication (10:05, 11:05, 12:05, 13:05, 14:05 —
+5 déclenchements/jour alignés sur le plafond du plugin). Chrome Canary reste en CDP
+persistant sur le port 9222 via son propre service launchd.
 
 > launchd ne déclenche le runner que si ton Mac est allumé. Le plugin garde la
 > queue en mémoire donc rien n'est perdu : le prochain run prend le relais.
@@ -265,23 +261,29 @@ Il ne requiert pas l'ancienne API Medium.
 3. Dans le Chrome dédié, connecte-toi une fois à `medium.com`.
 4. Lance le runner en daemon (voir ci-dessous).
 
-### Mode daemon
+### Mode daemon (macOS launchd)
 
 Le runner boucle en continu : il interroge `/medium-browser/next` toutes les 30 secondes, publie l'article dès qu'il est en queue, puis retourne attendre. Tu cliques **Publier maintenant** dans WordPress → dans les 30 secondes l'article est importé et publié sur Medium, sans rien relancer.
 
+Les fichiers launchd sont déjà générés dans `~/.local/config/`. Pour les installer :
+
 ```bash
-# Lancer en arrière-plan (session courante)
-mkdir -p ~/.local/log
-nohup node tools/runner/pk-medium-runner.js >> ~/.local/log/pk-medium-runner.out 2>&1 & disown
-
-# Surveiller les logs
-tail -f ~/.local/log/pk-medium-runner.log
-
-# Arrêter
-pkill -f pk-medium-runner.js
+# Installer les services launchd (un seul fois)
+cp ~/.local/config/com.pk.*.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.pk.x-runner.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.pk.medium-runner.plist
 ```
 
-Pour rendre le daemon persistant au démarrage du Mac, créer un fichier `~/Library/LaunchAgents/com.pk.medium-runner.plist` pointant vers le script, puis `launchctl load` celui-ci. Sur Linux : service systemd ou `pm2 start pk-medium-runner.js --name pk-medium-runner`.
+Gestion simple via `tools/runner/runnerctl.sh` :
+
+```bash
+./tools/runner/runnerctl.sh status    # Voir les services et processus
+./tools/runner/runnerctl.sh logs      # Suivre les logs (Ctrl+C pour quitter)
+./tools/runner/runnerctl.sh logs x    # Logs du runner X uniquement
+./tools/runner/runnerctl.sh restart   # Redémarrer les deux runners
+```
+
+Logs : `~/.local/log/pk-x-runner.log` et `~/.local/log/pk-medium-runner.log`
 
 Comportement :
 - claim de 15 minutes par article (évite deux runners sur le même post) ;
