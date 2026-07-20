@@ -4,10 +4,12 @@
   "private": true,
   "description": "Runner CDP pour partage X sans credits API (pilote ton Chrome reel).",
   "bin": {
-    "pk-x-runner": "./pk-x-runner.js"
+    "pk-x-runner": "./pk-x-runner.js",
+    "pk-medium-runner": "./pk-medium-runner.js"
   },
   "scripts": {
-    "start": "node pk-x-runner.js"
+    "start": "node pk-x-runner.js",
+    "medium": "node pk-medium-runner.js"
   },
   "dependencies": {
     "puppeteer-core": "^23.4.0"

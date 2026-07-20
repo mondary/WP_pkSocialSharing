@@ -4,7 +4,7 @@ Tags: linkedin, facebook, instagram, threads, medium, x, twitter, social, autopu
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.3.1
+Stable tag: 1.3.7
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram, Threads et Medium lors de la publication.
@@ -43,6 +43,30 @@ Fonctionnalites :
 * Medium necessite un integration token disponible dans les reglages Medium du compte.
 
 == Changelog ==
+
+= 1.3.7 =
+* Runner Medium en daemon: poll automatique de la queue toutes les 30 secondes, un clic sur "Publier maintenant" dans WordPress suffit pour declencher import + publication Medium
+
+= 1.3.6 =
+* Bouton Medium "Publier maintenant" adapte au runner: remet l'article dans la queue au lieu de tenter l'API Medium retiree
+
+= 1.3.5 =
+* Restauration de la section Publication Medium (statut + traduction); seul le bloc API obsolete (integration token) reste supprime
+
+= 1.3.4 =
+* Onglet Medium nettoye: seuls le runner navigateur et le tableau de test restent, l'API obsolète et ses champs sont retires de l'UI
+
+= 1.3.3 =
+* Statut Medium reflete le runner navigateur (Auto au lieu de Off), section API marquee obsolete, URL du post Medium stockee apres publication
+
+= 1.3.2 =
+* Ajout du runner navigateur Medium via medium.com/p/import, avec queue REST authentifiee et plafond quotidien
+
+= 1.3.1 =
+* Horodatage du test stocke dans une option dediee pour eviter qu'une sauvegarde concurrente restaure une ancienne heure
+
+= 1.3.0 =
+* L'etat de traduction affiche la date et l'heure precises du dernier test reussi
 
 = 1.2.2 =
 * Fix onglet X: ne plus generer toutes les URL x.com/intent a l'affichage pour eviter les appels traduction en masse

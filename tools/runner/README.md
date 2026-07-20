@@ -251,3 +251,50 @@ Logs : `tail -f /var/log/pk-x-runner.log`
 - Le runner ne touche qu'aux endpoints `/x-browser/*`, jamais au reste de WP.
 - Le profil Chrome dédié isole ta session X de ton navigateur principal.
 - CDP n'écoute que `127.0.0.1` (jamais exposé à l'extérieur).
+
+---
+
+## Runner Medium
+
+`pk-medium-runner.js` réutilise le même Chrome CDP et la session Medium connectée. Il ouvre
+`https://medium.com/p/import`, colle l'URL de l'article WordPress puis clique sur **Importer**.
+Il ne requiert pas l'ancienne API Medium.
+
+1. Dans `WP Admin > PK SocialSharing > Medium > Runner navigateur Medium`, active la queue et génère le token.
+2. Copie `tools/runner/medium-config.example.json` vers `~/.config/pk-medium-runner.json`, puis renseigne `wp_url` et `runner_token`.
+3. Dans le Chrome dédié, connecte-toi une fois à `medium.com`.
+4. Lance le runner en daemon (voir ci-dessous).
+
+### Mode daemon
+
+Le runner boucle en continu : il interroge `/medium-browser/next` toutes les 30 secondes, publie l'article dès qu'il est en queue, puis retourne attendre. Tu cliques **Publier maintenant** dans WordPress → dans les 30 secondes l'article est importé et publié sur Medium, sans rien relancer.
+
+```bash
+# Lancer en arrière-plan (session courante)
+mkdir -p ~/.local/log
+nohup node tools/runner/pk-medium-runner.js >> ~/.local/log/pk-medium-runner.out 2>&1 & disown
+
+# Surveiller les logs
+tail -f ~/.local/log/pk-medium-runner.log
+
+# Arrêter
+pkill -f pk-medium-runner.js
+```
+
+Pour rendre le daemon persistant au démarrage du Mac, créer un fichier `~/Library/LaunchAgents/com.pk.medium-runner.plist` pointant vers le script, puis `launchctl load` celui-ci. Sur Linux : service systemd ou `pm2 start pk-medium-runner.js --name pk-medium-runner`.
+
+Comportement :
+- claim de 15 minutes par article (évite deux runners sur le même post) ;
+- plafond quotidien configurable côté WordPress ;
+- en cas d'erreur (CDP coupé, réseau), reconnecte automatiquement le navigateur puis réessaie après 60 s ;
+- `autopublish: true` par défaut — clique Importer **puis** Publish dans la modal Medium. Mettre `false` pour ne créer que le brouillon ;
+- décocher « Le runner clique automatiquement sur Importer » dans l'admin pour garder une validation humaine finale.
+
+Endpoints Medium, tous protégés par `X-PK-Runner-Token` :
+
+| Méthode | URL | Rôle |
+|---|---|---|
+| `GET` | `/wp-json/pksocialsharing/v1/medium-browser/next` | Prochain article et URL à importer |
+| `POST` | `/wp-json/pksocialsharing/v1/medium-browser/done` | Marque l'import traité |
+| `POST` | `/wp-json/pksocialsharing/v1/medium-browser/release` | Libère le claim |
+| `GET` | `/wp-json/pksocialsharing/v1/medium-browser/status` | État de la queue |

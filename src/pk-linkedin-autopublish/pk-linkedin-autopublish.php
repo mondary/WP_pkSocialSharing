@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.3.1
+ * Version: 1.3.7
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -30,6 +30,7 @@ final class PKLIAP_Plugin {
 	const META_X_SHARED_AT = '_pkliap_x_shared_at';
 	const META_X_POST_ID = '_pkliap_x_post_id';
 	const META_X_BROWSER_CLAIMED_AT = '_pkliap_x_browser_claimed_at';
+	const META_MEDIUM_BROWSER_CLAIMED_AT = '_pkliap_medium_browser_claimed_at';
 	const META_FB_SHARED_AT = '_pkliap_fb_shared_at';
 	const META_FB_POST_ID = '_pkliap_fb_post_id';
 	const META_IG_SHARED_AT = '_pkliap_ig_shared_at';
@@ -60,6 +61,7 @@ final class PKLIAP_Plugin {
 		// Les routes x-browser ont leur propre authentification (token + option) et
 		// n'écrivent aucun fichier: elles s'enregistrent toujours, sans PKLIAP_ENABLE_SYNC_ROUTES.
 		add_action('rest_api_init', [__CLASS__, 'register_x_browser_routes']);
+		add_action('rest_api_init', [__CLASS__, 'register_medium_browser_routes']);
 		add_filter('cron_schedules', [__CLASS__, 'cron_schedules']);
 		add_action('init', [__CLASS__, 'maybe_schedule_retry_cron']);
 
@@ -78,6 +80,7 @@ final class PKLIAP_Plugin {
 		add_action('admin_post_pkliap_x_check', [__CLASS__, 'handle_x_check']);
 		add_action('admin_post_pkliap_x_intent', [__CLASS__, 'handle_x_intent']);
 		add_action('admin_post_pkliap_x_browser_generate_token', [__CLASS__, 'handle_x_browser_generate_token']);
+		add_action('admin_post_pkliap_medium_browser_generate_token', [__CLASS__, 'handle_medium_browser_generate_token']);
 		add_action('admin_post_pkliap_clear_network_error', [__CLASS__, 'handle_clear_network_error']);
 		add_action('admin_post_pkliap_meta_connect', [__CLASS__, 'handle_meta_connect']);
 		add_action('admin_post_pkliap_meta_oauth_callback', [__CLASS__, 'handle_meta_oauth_callback']);
@@ -462,6 +465,23 @@ final class PKLIAP_Plugin {
 		]);
 	}
 
+	public static function register_medium_browser_routes(): void {
+		foreach (['next' => 'rest_medium_browser_next', 'done' => 'rest_medium_browser_done', 'release' => 'rest_medium_browser_release', 'status' => 'rest_medium_browser_status'] as $action => $callback) {
+			register_rest_route(self::SYNC_NAMESPACE, '/medium-browser/' . $action, [
+				'methods' => in_array($action, ['next', 'status'], true) ? 'GET' : 'POST',
+				'permission_callback' => [__CLASS__, 'medium_browser_rest_check'],
+				'callback' => [__CLASS__, $callback],
+			]);
+		}
+	}
+
+	public static function medium_browser_rest_check(WP_REST_Request $request): bool {
+		$opt = self::get_options();
+		$token = (string)$opt['medium_browser_runner_token'];
+		$sent = (string)$request->get_header('x_pk_runner_token');
+		return !empty($opt['medium_browser_enabled']) && $token !== '' && $sent !== '' && hash_equals($token, $sent);
+	}
+
 	public static function x_browser_rest_check(WP_REST_Request $request): bool {
 		$opt = self::get_options();
 		if (empty($opt['x_browser_enabled'])) {
@@ -603,6 +623,87 @@ final class PKLIAP_Plugin {
 			'x_browser_last_run_at' => time(),
 			'x_browser_last_status' => $status,
 		]);
+	}
+
+	public static function rest_medium_browser_next(WP_REST_Request $request): WP_REST_Response {
+		$opt = self::get_options();
+		if (self::medium_browser_daily_count($opt) >= (int)$opt['medium_browser_daily_cap']) {
+			self::medium_browser_record_run('daily_cap_reached');
+			return new WP_REST_Response(['empty' => true, 'reason' => 'daily_cap'], 200);
+		}
+		$post_types = array_values(array_filter((array)($opt['post_type_whitelist'] ?? []))) ?: ['post'];
+		$q = new WP_Query([
+			'post_type' => $post_types,
+			'post_status' => 'publish',
+			'fields' => 'ids',
+			'posts_per_page' => 50,
+			'orderby' => 'date',
+			'order' => 'DESC',
+			'no_found_rows' => true,
+			'meta_query' => [
+				'relation' => 'OR',
+				['key' => self::META_MEDIUM_SHARED_AT, 'compare' => 'NOT EXISTS'],
+				['key' => self::META_MEDIUM_SHARED_AT, 'value' => '0', 'compare' => '<='],
+			],
+		]);
+		$now = time();
+		$chosen = 0;
+		foreach ((array)$q->posts as $post_id) {
+			$claimed = (int)get_post_meta((int)$post_id, self::META_MEDIUM_BROWSER_CLAIMED_AT, true);
+			if ($claimed === 0 || ($now - $claimed) >= 15 * MINUTE_IN_SECONDS) {
+				$chosen = (int)$post_id;
+				break;
+			}
+		}
+		if (!$chosen) {
+			self::medium_browser_record_run('queue_empty');
+			return new WP_REST_Response(['empty' => true, 'reason' => 'queue_empty'], 200);
+		}
+		update_post_meta($chosen, self::META_MEDIUM_BROWSER_CLAIMED_AT, $now);
+		self::medium_browser_record_run('claimed');
+		return new WP_REST_Response(['empty' => false, 'post_id' => $chosen, 'title' => wp_strip_all_tags(get_the_title($chosen)), 'link' => self::get_post_link($chosen, $opt), 'import_url' => 'https://medium.com/p/import', 'autoclick' => !empty($opt['medium_browser_autoclick'])], 200);
+	}
+
+	public static function rest_medium_browser_done(WP_REST_Request $request): WP_REST_Response {
+		$post_id = (int)$request->get_param('post_id');
+		if (!$post_id) return new WP_REST_Response(['error' => 'post_id manquant'], 400);
+		$medium_post_url = esc_url_raw((string)$request->get_param('medium_post_url'));
+		update_post_meta($post_id, self::META_MEDIUM_SHARED_AT, time());
+		delete_post_meta($post_id, self::META_MEDIUM_BROWSER_CLAIMED_AT);
+		if ($medium_post_url !== '') {
+			update_post_meta($post_id, self::META_MEDIUM_POST_URL, $medium_post_url);
+		}
+		self::medium_browser_increment_daily();
+		self::medium_browser_record_run('done');
+		return new WP_REST_Response(['ok' => true], 200);
+	}
+
+	public static function rest_medium_browser_release(WP_REST_Request $request): WP_REST_Response {
+		$post_id = (int)$request->get_param('post_id');
+		if (!$post_id) return new WP_REST_Response(['error' => 'post_id manquant'], 400);
+		delete_post_meta($post_id, self::META_MEDIUM_BROWSER_CLAIMED_AT);
+		self::medium_browser_record_run('released');
+		return new WP_REST_Response(['ok' => true], 200);
+	}
+
+	public static function rest_medium_browser_status(WP_REST_Request $request): WP_REST_Response {
+		$opt = self::get_options();
+		return new WP_REST_Response(['enabled' => !empty($opt['medium_browser_enabled']), 'daily_cap' => (int)$opt['medium_browser_daily_cap'], 'shared_today' => self::medium_browser_daily_count($opt), 'last_run_at' => (int)$opt['medium_browser_last_run_at'], 'last_status' => (string)$opt['medium_browser_last_status']], 200);
+	}
+
+	private static function medium_browser_daily_count(array $opt): int {
+		return (string)$opt['medium_browser_shared_today_date'] === wp_date('Y-m-d') ? (int)$opt['medium_browser_shared_today_count'] : 0;
+	}
+
+	private static function medium_browser_increment_daily(): void {
+		$opt = self::get_options();
+		$today = wp_date('Y-m-d');
+		$count = (string)$opt['medium_browser_shared_today_date'] === $today ? (int)$opt['medium_browser_shared_today_count'] : 0;
+		self::update_options(['medium_browser_shared_today_count' => $count + 1, 'medium_browser_shared_today_date' => $today]);
+	}
+
+	private static function medium_browser_record_run(string $status): void {
+		self::update_options(['medium_browser_last_run_at' => time(), 'medium_browser_last_status' => $status]);
 	}
 
 	public static function rest_manifest(WP_REST_Request $request): WP_REST_Response {
@@ -854,6 +955,14 @@ final class PKLIAP_Plugin {
 			'medium_user_id' => '',
 			'medium_access_token' => '',
 			'medium_publish_status' => 'public',
+			'medium_browser_enabled' => 0,
+			'medium_browser_runner_token' => '',
+			'medium_browser_daily_cap' => 5,
+			'medium_browser_autoclick' => 1,
+			'medium_browser_last_run_at' => 0,
+			'medium_browser_last_status' => '',
+			'medium_browser_shared_today_count' => 0,
+			'medium_browser_shared_today_date' => '',
 			'last_medium_error' => '',
 			'last_medium_error_at' => 0,
 			// === Traduction automatique (config globale, voir Dashboard) ===
@@ -1059,6 +1168,14 @@ final class PKLIAP_Plugin {
 		$out['medium_user_id'] = array_key_exists('medium_user_id', $value) ? sanitize_text_field((string)$value['medium_user_id']) : (string)$current['medium_user_id'];
 		$out['medium_access_token'] = array_key_exists('medium_access_token', $value) ? sanitize_text_field((string)$value['medium_access_token']) : (string)$current['medium_access_token'];
 		$out['medium_publish_status'] = array_key_exists('medium_publish_status', $value) && in_array((string)$value['medium_publish_status'], ['draft', 'public', 'unlisted'], true) ? (string)$value['medium_publish_status'] : (string)$current['medium_publish_status'];
+		$out['medium_browser_enabled'] = array_key_exists('medium_browser_enabled', $value) ? (empty($value['medium_browser_enabled']) ? 0 : 1) : (int)$current['medium_browser_enabled'];
+		$out['medium_browser_runner_token'] = array_key_exists('medium_browser_runner_token', $value) ? preg_replace('/[^a-zA-Z0-9]/', '', (string)$value['medium_browser_runner_token']) : (string)$current['medium_browser_runner_token'];
+		$out['medium_browser_daily_cap'] = array_key_exists('medium_browser_daily_cap', $value) ? max(0, min(50, (int)$value['medium_browser_daily_cap'])) : (int)$current['medium_browser_daily_cap'];
+		$out['medium_browser_autoclick'] = array_key_exists('medium_browser_autoclick', $value) ? (empty($value['medium_browser_autoclick']) ? 0 : 1) : (int)$current['medium_browser_autoclick'];
+		$out['medium_browser_last_run_at'] = (int)$current['medium_browser_last_run_at'];
+		$out['medium_browser_last_status'] = (string)$current['medium_browser_last_status'];
+		$out['medium_browser_shared_today_count'] = (int)$current['medium_browser_shared_today_count'];
+		$out['medium_browser_shared_today_date'] = (string)$current['medium_browser_shared_today_date'];
 		$medium_credentials_changed = ((string)$out['medium_user_id'] !== (string)$current['medium_user_id']) || ((string)$out['medium_access_token'] !== (string)$current['medium_access_token']);
 		$out['require_image'] = array_key_exists('require_image', $value) ? (empty($value['require_image']) ? 0 : 1) : (int)$current['require_image'];
 
@@ -1232,7 +1349,8 @@ final class PKLIAP_Plugin {
 		$fb_connected = (!empty($opt['fb_page_id']) && !empty($opt['fb_access_token']));
 		$ig_connected = (!empty($opt['ig_user_id']) && !empty($opt['ig_access_token']));
 		$threads_connected = (!empty($opt['threads_user_id']) && !empty($opt['threads_access_token']));
-		$medium_connected = (!empty($opt['medium_user_id']) && !empty($opt['medium_access_token']));
+		$medium_connected = (!empty($opt['medium_user_id']) && !empty($opt['medium_access_token'])) || !empty($opt['medium_browser_enabled']);
+		$medium_runner_active = !empty($opt['medium_browser_enabled']) && !empty($opt['medium_browser_runner_token']);
 		$health = self::build_connection_health($opt, $has_token, $token_not_expired, $has_author_urn, $x_connected, $fb_connected, $ig_connected, $threads_connected, $medium_connected);
 
 		$tz = function_exists('wp_timezone') ? wp_timezone() : new DateTimeZone('UTC');
@@ -1266,7 +1384,7 @@ final class PKLIAP_Plugin {
 			'facebook' => ['label' => 'Facebook',  'enabled' => !empty($opt['fb_enabled']), 'connected' => $fb_connected,       'meta' => self::META_FB_SHARED_AT, 'err_key' => 'last_fb_error'],
 			'instagram'=> ['label' => 'Instagram', 'enabled' => !empty($opt['ig_enabled']), 'connected' => $ig_connected,       'meta' => self::META_IG_SHARED_AT, 'err_key' => 'last_ig_error'],
 			'threads'  => ['label' => 'Threads',   'enabled' => !empty($opt['threads_enabled']), 'connected' => $threads_connected, 'meta' => self::META_THREADS_SHARED_AT, 'err_key' => 'last_threads_error'],
-			'medium'   => ['label' => 'Medium',    'enabled' => !empty($opt['medium_enabled']), 'connected' => $medium_connected, 'meta' => self::META_MEDIUM_SHARED_AT, 'err_key' => 'last_medium_error'],
+			'medium'   => ['label' => 'Medium',    'enabled' => !empty($opt['medium_enabled']) || !empty($opt['medium_browser_enabled']), 'connected' => $medium_connected, 'meta' => self::META_MEDIUM_SHARED_AT, 'err_key' => 'last_medium_error'],
 		];
 		$planned_by_net = [];
 		$done_by_net = [];
@@ -1314,7 +1432,7 @@ final class PKLIAP_Plugin {
 			'facebook' => self::network_tab_status('facebook', !empty($opt['fb_enabled']), $fb_connected, (string)($opt['last_fb_error'] ?? '')),
 			'instagram' => self::network_tab_status('instagram', !empty($opt['ig_enabled']), $ig_connected, (string)($opt['last_ig_error'] ?? '')),
 			'threads' => self::network_tab_status('threads', !empty($opt['threads_enabled']), $threads_connected, (string)($opt['last_threads_error'] ?? '')),
-			'medium' => self::network_tab_status('medium', !empty($opt['medium_enabled']), $medium_connected, (string)($opt['last_medium_error'] ?? '')),
+			'medium' => self::network_tab_status('medium', !empty($opt['medium_enabled']) || !empty($opt['medium_browser_enabled']), $medium_connected, (string)($opt['last_medium_error'] ?? '')),
 		];
 
 		?>
@@ -2425,40 +2543,6 @@ final class PKLIAP_Plugin {
 					</div>
 				<?php elseif ($active_network === 'medium'): ?>
 					<div class="pks-grid">
-						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
-							<div class="pks-card-title">Medium: connexion</div>
-							<?php settings_fields('pkliap'); ?>
-							<p class="pks-info" style="margin:-4px 0 12px;">Medium utilise un <strong>integration token</strong>. Le plugin peut détecter le User ID avec ce token, ou tu peux le coller manuellement.</p>
-							<div class="pks-checkrow" style="margin-bottom:12px;">
-								<span class="pks-pill pks-pill--warn">1</span>
-								<div>
-									<strong>Récupérer le token</strong>
-									<p>Ouvre les réglages Medium, section Integration tokens, puis génère un token pour ce plugin. Medium peut restreindre cette option selon les comptes.</p>
-									<p style="margin:8px 0 0;">
-										<a class="button button-primary" href="<?php echo esc_url($link_medium_settings); ?>" target="_blank" rel="noopener">Ouvrir Medium Settings</a>
-										<a class="button" href="<?php echo esc_url($link_medium_docs); ?>" target="_blank" rel="noopener">Docs API Medium</a>
-									</p>
-								</div>
-							</div>
-							<table class="form-table" role="presentation">
-								<tr>
-									<th scope="row">Medium Access Token</th>
-									<td>
-										<input class="regular-text" type="password" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_access_token]" value="<?php echo esc_attr((string)$opt['medium_access_token']); ?>"/>
-										<p class="description">Token Medium avec permission de publication. Le plugin appelle <code>/v1/me</code> pour vérifier le compte.</p>
-									</td>
-								</tr>
-								<tr>
-									<th scope="row">Medium User ID</th>
-									<td>
-										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_user_id]" value="<?php echo esc_attr((string)$opt['medium_user_id']); ?>"/>
-										<p class="description">Optionnel si le token est valide: le plugin le remplit automatiquement après un test réussi.</p>
-									</td>
-								</tr>
-							</table>
-							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
-						</form>
-
 						<form method="post" action="options.php" class="pks-card pks-card--accent-ok">
 							<div class="pks-card-title">Publication Medium</div>
 							<?php settings_fields('pkliap'); ?>
@@ -2482,6 +2566,18 @@ final class PKLIAP_Plugin {
 									<a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_clear_network_error') . '&network=medium', 'pkliap_clear_network_error_medium')); ?>">Effacer cette ancienne erreur</a>
 								</p>
 							<?php endif; ?>
+							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
+						</form>
+
+						<form method="post" action="options.php" class="pks-card pks-card--accent-blue">
+							<div class="pks-card-title">Runner navigateur Medium</div>
+							<?php settings_fields('pkliap'); ?>
+							<p class="pks-info" style="margin:-4px 0 12px;">Le runner importe tes articles via <a href="https://medium.com/p/import" target="_blank" rel="noopener"><code>medium.com/p/import</code></a> dans Chrome connecté à Medium, sans integration token ni API.</p>
+							<label class="pks-inline"><input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_browser_enabled]" value="0"/><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_browser_enabled]" value="1" <?php checked(1, (int)$opt['medium_browser_enabled']); ?>/> Exposer la queue Medium aux scripts externes authentifiés par token</label>
+							<p style="margin:12px 0 0;"><strong>Token runner</strong><br/><input class="regular-text" type="text" readonly value="<?php echo esc_attr((string)$opt['medium_browser_runner_token']); ?>" placeholder="— non généré —"/> <a class="button" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_medium_browser_generate_token'), 'pkliap_medium_browser_generate_token')); ?>">Générer / Régénérer</a></p>
+							<p><label>Plafond quotidien <input class="small-text" type="number" min="0" max="50" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_browser_daily_cap]" value="<?php echo esc_attr((int)$opt['medium_browser_daily_cap']); ?>"/></label></p>
+							<label class="pks-inline"><input type="hidden" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_browser_autoclick]" value="0"/><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[medium_browser_autoclick]" value="1" <?php checked(1, (int)$opt['medium_browser_autoclick']); ?>/> Le runner clique automatiquement sur Importer</label>
+							<p class="description">Aujourd'hui: <strong><?php echo (int)self::medium_browser_daily_count($opt); ?></strong> / <?php echo (int)$opt['medium_browser_daily_cap']; ?>. Endpoint: <code><?php echo esc_html(rest_url(self::SYNC_NAMESPACE . '/medium-browser/next')); ?></code></p>
 							<?php submit_button('Enregistrer', 'primary', 'submit', false); ?>
 						</form>
 
@@ -2519,6 +2615,7 @@ final class PKLIAP_Plugin {
 										$medium_post_url = (string)get_post_meta($p->ID, self::META_MEDIUM_POST_URL, true);
 										$medium_status = $medium_shared_at ? ('Partagé le ' . esc_html(wp_date('Y-m-d H:i', $medium_shared_at)) . ($medium_post_id ? '<br/><code style="font-size:11px;">' . esc_html($medium_post_id) . '</code>' : '') . ($medium_post_url ? '<br/><a href="' . esc_url($medium_post_url) . '" target="_blank" rel="noopener">Voir sur Medium</a>' : '')) : 'Jamais partagé';
 										$medium_action_url = wp_nonce_url(self::admin_url_action('pkliap_test_post') . '&post_id=' . (int)$p->ID . '&network=medium', 'pkliap_test_post_' . (int)$p->ID);
+									$medium_action_label = !empty($opt['medium_browser_enabled']) ? 'Remettre dans la queue' : 'Publier maintenant';
 										$edit_url = get_edit_post_link($p->ID, '');
 										$thumb_html = get_the_post_thumbnail($p->ID, [48, 48], ['style' => 'width:48px;height:48px;object-fit:cover;border-radius:4px;']);
 										?>
@@ -2533,7 +2630,7 @@ final class PKLIAP_Plugin {
 												</div>
 											</td>
 											<td><?php echo $medium_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
-											<td><a class="button button-secondary" href="<?php echo esc_url($medium_action_url); ?>">Publier maintenant</a></td>
+											<td><a class="button button-secondary" href="<?php echo esc_url($medium_action_url); ?>"><?php echo esc_html($medium_action_label); ?></a></td>
 										</tr>
 									<?php endforeach; ?>
 								<?php endif; ?>
@@ -3622,6 +3719,22 @@ final class PKLIAP_Plugin {
 		exit;
 	}
 
+	public static function handle_medium_browser_generate_token(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		check_admin_referer('pkliap_medium_browser_generate_token');
+		try {
+			$token = bin2hex(random_bytes(24));
+		} catch (Throwable $e) {
+			$token = wp_generate_password(48, false, false);
+		}
+		self::update_options(['medium_browser_runner_token' => $token]);
+		self::set_flash('notice', 'Token runner Medium généré. Copie-le dans la configuration du script.');
+		wp_safe_redirect(self::settings_url(['network' => 'medium']));
+		exit;
+	}
+
 	public static function handle_x_check(): void {
 		if (!current_user_can('manage_options')) {
 			wp_die('Forbidden');
@@ -4063,6 +4176,15 @@ final class PKLIAP_Plugin {
 			} elseif ($network === 'threads') {
 				$res = self::share_post_to_threads($post_id, true);
 			} elseif ($network === 'medium') {
+				$opt = self::get_options();
+				if (!empty($opt['medium_browser_enabled'])) {
+					// Mode runner navigateur: on remet l'article dans la queue du runner.
+					delete_post_meta($post_id, self::META_MEDIUM_SHARED_AT);
+					delete_post_meta($post_id, self::META_MEDIUM_BROWSER_CLAIMED_AT);
+					self::set_flash('notice', 'Article remis dans la queue du runner navigateur Medium. Relance le runner pour le publier.');
+					wp_safe_redirect(self::settings_url(['network' => $network]));
+					exit;
+				}
 				$res = self::share_post_to_medium($post_id, true);
 			} else {
 				$res = self::share_post_to_linkedin($post_id, true);
@@ -4157,7 +4279,7 @@ final class PKLIAP_Plugin {
 		}
 
 		$opt = self::get_options();
-		if (empty($opt['enabled']) && empty($opt['x_enabled']) && empty($opt['fb_enabled']) && empty($opt['ig_enabled']) && empty($opt['threads_enabled']) && empty($opt['medium_enabled'])) {
+		if (empty($opt['enabled']) && empty($opt['x_enabled']) && empty($opt['fb_enabled']) && empty($opt['ig_enabled']) && empty($opt['threads_enabled']) && empty($opt['medium_enabled']) && empty($opt['medium_browser_enabled'])) {
 			return;
 		}
 
@@ -4266,7 +4388,7 @@ final class PKLIAP_Plugin {
 		}
 
 		// Medium traité immédiatement pour ne pas dépendre uniquement du WP-Cron.
-		if (!empty($opt['medium_enabled']) && (!$medium_already || !empty($opt['share_on_update']))) {
+		if ((!empty($opt['medium_enabled']) || !empty($opt['medium_browser_enabled'])) && (!$medium_already || !empty($opt['share_on_update']))) {
 			try {
 				$medium_res = self::share_post_to_medium($post->ID, false);
 				if (is_wp_error($medium_res)) {
@@ -4297,7 +4419,7 @@ final class PKLIAP_Plugin {
 			'facebook'  => ['enabled' => !empty($opt['fb_enabled']), 'callback' => 'share_post_to_facebook',  'err_key' => 'last_fb_error'],
 			'instagram' => ['enabled' => !empty($opt['ig_enabled']), 'callback' => 'share_post_to_instagram', 'err_key' => 'last_ig_error'],
 			'threads'   => ['enabled' => !empty($opt['threads_enabled']), 'callback' => 'share_post_to_threads', 'err_key' => 'last_threads_error'],
-			'medium'    => ['enabled' => !empty($opt['medium_enabled']), 'callback' => 'share_post_to_medium', 'err_key' => 'last_medium_error'],
+			'medium'    => ['enabled' => !empty($opt['medium_enabled']) || !empty($opt['medium_browser_enabled']), 'callback' => 'share_post_to_medium', 'err_key' => 'last_medium_error'],
 		];
 
 		foreach ($networks as $net => $cfg) {
@@ -4411,7 +4533,7 @@ final class PKLIAP_Plugin {
 			'facebook' => ['enabled' => !empty($opt['fb_enabled']), 'callback' => 'share_post_to_facebook', 'err_key' => 'last_fb_error', 'meta' => self::META_FB_SHARED_AT],
 			'instagram' => ['enabled' => !empty($opt['ig_enabled']), 'callback' => 'share_post_to_instagram', 'err_key' => 'last_ig_error', 'meta' => self::META_IG_SHARED_AT],
 			'threads' => ['enabled' => !empty($opt['threads_enabled']), 'callback' => 'share_post_to_threads', 'err_key' => 'last_threads_error', 'meta' => self::META_THREADS_SHARED_AT],
-			'medium' => ['enabled' => !empty($opt['medium_enabled']), 'callback' => 'share_post_to_medium', 'err_key' => 'last_medium_error', 'meta' => self::META_MEDIUM_SHARED_AT],
+			'medium' => ['enabled' => !empty($opt['medium_enabled']) || !empty($opt['medium_browser_enabled']), 'callback' => 'share_post_to_medium', 'err_key' => 'last_medium_error', 'meta' => self::META_MEDIUM_SHARED_AT],
 		];
 	}
 
@@ -5237,7 +5359,11 @@ final class PKLIAP_Plugin {
 		}
 
 		$opt = self::get_options();
-		if (empty($opt['medium_enabled']) && !$force) {
+		if (empty($opt['medium_enabled']) && empty($opt['medium_browser_enabled']) && !$force) {
+			return ['skipped' => true];
+		}
+		// Le runner navigateur importe l'URL via medium.com/p/import et ne dépend pas de l'API retirée.
+		if (!empty($opt['medium_browser_enabled']) && !$force) {
 			return ['skipped' => true];
 		}
 		if (empty($opt['medium_access_token'])) {

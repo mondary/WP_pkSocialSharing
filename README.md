@@ -19,6 +19,7 @@
 - Configuration Meta centralisée : connexion OAuth, token longue durée, détection Page Facebook et compte Instagram.
 - Publication X via API, ou fallback navigateur si les crédits API sont insuffisants.
 - Runner navigateur X (CDP) : queue REST + token + plafond quotidien, automatisable via un cron `launchd`/`systemd` sur ta machine (zéro crédit API, fingerprint humain). Utilise **Chrome Canary** comme navigateur dédié pour publier en arrière-plan sans perturber ton Chrome principal. Voir [`tools/runner/`](tools/runner/README.md).
+- Runner navigateur Medium (CDP) : importe l'URL de l'article via `medium.com/p/import`, sans dépendre de l'API Medium retirée. Mode daemon qui poll la queue toutes les 30 secondes — un clic sur **Publier maintenant** dans WordPress déclenche l'import et la publication Medium sans rien relancer. Réutilise le Chrome dédié et la queue REST du plugin. Voir [`tools/runner/`](tools/runner/README.md).
 
 ## 🧠 Utilisation
 
@@ -39,7 +40,7 @@ Le partage automatique se déclenche au moment où l’article passe en statut `
 - `Facebook` : Page ID, Page Access Token, publication sur Page avec image mise en avant si disponible.
 - `Instagram` : IG User ID, Access Token, publication via Instagram Graph API.
 - `Threads` : Threads User ID, Access Token, publication via API Threads.
-- `Medium` : Integration token, User ID, statut `public`, `draft` ou `unlisted`.
+- `Medium` : Integration token historique, ou runner navigateur qui importe l'URL de l'article sans API.
 - `Meta` : App ID, App Secret et connexion OAuth pour obtenir un token longue durée et remplir Facebook/Instagram proprement.
 - `Types de contenu` : choix des post types autorisés pour la publication automatique.
 
@@ -110,7 +111,13 @@ Mise à jour live :
 - Après une mise à jour, vérifier la version affichée dans WordPress et tester un partage manuel sur le réseau modifié.
 
 ## 🧾 Changelog
-
+ 
+- `1.3.7` : runner Medium transformé en daemon — poll automatique toutes les 30 s, un clic sur « Publier maintenant » dans WordPress suffit.
+- `1.3.6` : bouton « Publier maintenant » Medium adapté au runner — remet l'article dans la queue au lieu de tenter l'API retirée.
+- `1.3.5` : restauration de la section Publication Medium (statut + traduction) — seul le bloc API obsolète (integration token) reste supprimé.
+- `1.3.4` : onglet Medium nettoyé — seuls le runner navigateur et le tableau de test restent, l'API obsolète et ses champs sont retirés de l'UI.
+- `1.3.3` : statut Medium reflète le runner navigateur (Auto au lieu de Off), section API marquée obsolète, URL du post Medium stockée après publication.
+- `1.3.2` : ajout du runner navigateur Medium via `medium.com/p/import`, avec queue REST authentifiée et plafond quotidien.
 - `1.3.1` : horodatage du test stocké dans une option dédiée pour éviter qu’une sauvegarde concurrente restaure une ancienne heure.
 - `1.3.0` : l’état de traduction affiche la date et l’heure précises du dernier test réussi.
 - `1.2.9` : l’état de traduction affiche `Dernier test réussi` sans timestamp persistant ambigu.
