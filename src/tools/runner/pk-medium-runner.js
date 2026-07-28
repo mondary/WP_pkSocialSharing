@@ -67,20 +67,13 @@ async function release(config, postId) {
 	await wpCall(config, 'POST', 'medium-browser/release', { post_id: postId }).catch(() => {});
 }
 
-async function processNext(config, browser) {
-	const next = await wpCall(config, 'GET', 'medium-browser/next');
-	if (!next.ok) throw new Error(`/next HTTP ${next.status}: ${JSON.stringify(next.data)}`);
-	if (next.data.empty) {
-		log(`RIEN (${next.data.reason || 'queue_empty'})`);
-		return false;
-	}
-
-	const postId = next.data.post_id;
+async function processNext(config, browser, next) {
+	const postId = next.post_id;
 	let page;
 	try {
-		log(`POST #${postId} « ${next.data.title} » — ${next.data.link}`);
+		log(`POST #${postId} « ${next.title} » — ${next.link}`);
 		page = await browser.newPage();
-		await page.goto(next.data.import_url, { waitUntil: 'networkidle2', timeout: 30000 });
+		await page.goto(next.import_url, { waitUntil: 'networkidle2', timeout: 30000 });
 		await sleep(2000);
 
 		const textboxSelector = 'div[role="textbox"]';
@@ -89,16 +82,16 @@ async function processNext(config, browser) {
 		await sleep(200);
 		await page.evaluate(() => { document.execCommand('selectAll', false, null); });
 		await page.keyboard.press('Backspace');
-		await page.keyboard.type(next.data.link, { delay: 5 });
+		await page.keyboard.type(next.link, { delay: 5 });
 		await sleep(500);
 
 		const typed = await page.evaluate((selector, expected) => {
 			const el = document.querySelector(selector);
 			return el && (el.textContent || '').includes(expected);
-		}, textboxSelector, next.data.link);
+		}, textboxSelector, next.link);
 		if (!typed) throw new Error('URL non insérée dans le champ Medium');
 
-		const autoclick = config.autoclick_override === null ? !!next.data.autoclick : !!config.autoclick_override;
+		const autoclick = config.autoclick_override === null ? !!next.autoclick : !!config.autoclick_override;
 		if (!autoclick) {
 			log(`POST #${postId}: URL collée, validation manuelle requise.`);
 			await release(config, postId);
@@ -121,7 +114,7 @@ async function processNext(config, browser) {
 		await page.waitForFunction(
 			(importUrl) => !window.location.href.startsWith(importUrl),
 			{ timeout: importTimeout },
-			next.data.import_url
+			next.import_url
 		).catch(() => { throw new Error(`redirection après import absente après ${importTimeout}ms`); });
 
 		await sleep(3000);
@@ -203,7 +196,7 @@ async function daemon() {
 	}
 
 	log(`Démarrage daemon (poll ${POLL_INTERVAL_MS / 1000}s, wp=${config.wp_url})`);
-	let browser = await connectBrowser(config);
+	let browser = null;
 
 	while (!stopping) {
 		if (fs.existsSync(KILL_SWITCH)) {
@@ -211,11 +204,15 @@ async function daemon() {
 			break;
 		}
 		try {
-			const hasWork = await processNext(config, browser);
-			if (!hasWork) {
+			const response = await wpCall(config, 'GET', 'medium-browser/next');
+			if (!response.ok) throw new Error(`/next HTTP ${response.status}: ${JSON.stringify(response.data)}`);
+			if (response.data.empty) {
+				log(`RIEN (${response.data.reason || 'queue_empty'})`);
 				await sleep(POLL_INTERVAL_MS);
 				continue;
 			}
+			if (!browser) browser = await connectBrowser(config);
+			await processNext(config, browser, response.data);
 			// dès qu'un post est traité, on reboucle tout de suite au cas où la queue contient plusieurs posts
 			continue;
 		} catch (error) {
@@ -223,12 +220,8 @@ async function daemon() {
 			// Reconnecter le navigateur si la connexion CDP a sauté
 			if (browser) await browser.disconnect().catch(() => {});
 			browser = null;
-			try {
-				browser = await connectBrowser(config);
-			} catch (connectError) {
-				log(`Reconnexion navigateur échouée: ${connectError.message}. Retry dans ${ERROR_BACKOFF_MS / 1000}s.`);
-				await sleep(ERROR_BACKOFF_MS);
-			}
+			log(`Retry dans ${ERROR_BACKOFF_MS / 1000}s.`);
+			await sleep(ERROR_BACKOFF_MS);
 		}
 	}
 

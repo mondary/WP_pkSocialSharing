@@ -4,11 +4,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 X_PLIST="$HOME/Library/LaunchAgents/com.pk.x-runner.plist"
 MEDIUM_PLIST="$HOME/Library/LaunchAgents/com.pk.medium-runner.plist"
+CHROME_PLIST="$HOME/Library/LaunchAgents/com.pk.chrome-canary-cdp.plist"
+KILL_SWITCH="$HOME/.config/pk-runners.disabled"
 USER_ID=$(id -u)
 
 case "${1:-status}" in
     start)
         echo "Démarrage des runners..."
+        rm -f "$KILL_SWITCH"
         launchctl bootstrap gui/$USER_ID "$X_PLIST" 2>/dev/null || true
         launchctl bootstrap gui/$USER_ID "$MEDIUM_PLIST" 2>/dev/null || true
         sleep 2
@@ -16,10 +19,14 @@ case "${1:-status}" in
         ;;
     stop)
         echo "Arrêt des runners..."
+        mkdir -p "$(dirname "$KILL_SWITCH")"
+        touch "$KILL_SWITCH"
         launchctl bootout gui/$UID/com.pk.x-runner 2>/dev/null || true
         launchctl bootout gui/$UID/com.pk.medium-runner 2>/dev/null || true
+        launchctl bootout gui/$UID/com.pk.chrome-canary-cdp 2>/dev/null || true
+        pkill -9 -f "Google Chrome Canary" 2>/dev/null || true
         sleep 1
-        echo "Runners arrêtés."
+        echo "Runners et Chrome Canary arrêtés. Kill switch actif."
         ;;
     restart)
         $0 stop
@@ -27,6 +34,11 @@ case "${1:-status}" in
         $0 start
         ;;
     status)
+        if [[ -f "$KILL_SWITCH" ]]; then
+            echo "Kill switch : ACTIF ($KILL_SWITCH)"
+        else
+            echo "Kill switch : inactif"
+        fi
         echo "Statut launchd :"
         launchctl list | grep -E "com.pk\.(x-runner|medium-runner|chrome-canary-cdp)" || echo "Aucun runner chargé."
         echo ""
@@ -41,8 +53,12 @@ case "${1:-status}" in
             *) echo "Usage: $0 logs [x|medium|all]" ;;
         esac
         ;;
+    enable)
+        rm -f "$KILL_SWITCH"
+        echo "Kill switch retiré. Utilise '$0 start' pour charger les runners."
+        ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|logs [x|medium|all]}"
+        echo "Usage: $0 {start|stop|restart|status|logs [x|medium|all]|enable}"
         exit 1
         ;;
 esac

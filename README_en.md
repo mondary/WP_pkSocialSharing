@@ -19,6 +19,7 @@
 - Centralized Meta setup: OAuth connection, long-lived token, Facebook Page and Instagram account detection.
 - X publishing through the API or browser fallback when API credits are not available.
 - X browser runner (CDP): token-authenticated REST queue + daily cap, automatable via a local `launchd`/`systemd` cron on your machine (zero API credits, human fingerprint). Uses **Chrome Canary** as a dedicated browser that posts in the background without disrupting your main Chrome. See [`src/tools/runner/`](src/tools/runner/README.md).
+- macOS menu bar controller: left-click 🟢/🔴 to enable or stop all runners, right-click for logs. Chrome Canary opens only when an article is waiting to be published.
 
 ## 🧠 Usage
 

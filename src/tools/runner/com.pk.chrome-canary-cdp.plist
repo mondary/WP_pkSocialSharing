@@ -17,12 +17,6 @@
         <string>--window-size=600,900</string>
     </array>
 
-    <key>RunAtLoad</key>
-    <true/>
-
-    <key>KeepAlive</key>
-    <true/>
-
     <key>StandardOutPath</key>
     <string>/tmp/pk-canary.out.log</string>
     <key>StandardErrorPath</key>

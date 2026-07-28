@@ -99,7 +99,7 @@ tail -f ~/.local/log/pk-x-runner.log
 Si un article est en attente X : un nouvel onglet s'ouvre dans le Chrome dédié,
 le tweet est publié automatiquement, puis l'onglet se ferme.
 
-### 6. Automatiser avec launchd (Chrome Canary + runner)
+### 6. Automatiser avec launchd (runner à la demande)
 
 Les fichiers launchd sont pré-configurés dans `~/.local/config/`. Utiliser `src/tools/runner/runnerctl.sh` pour la gestion :
 
@@ -118,8 +118,18 @@ Les fichiers launchd sont pré-configurés dans `~/.local/config/`. Utiliser `sr
 ```
 
 Le runner X se déclenche aux heures de publication (10:05, 11:05, 12:05, 13:05, 14:05 —
-5 déclenchements/jour alignés sur le plafond du plugin). Chrome Canary reste en CDP
-persistant sur le port 9222 via son propre service launchd.
+5 déclenchements/jour alignés sur le plafond du plugin). Chrome Canary ne démarre que
+lorsqu'un article est réellement à publier et se connecte au port CDP 9222.
+
+### 7. Contrôleur menubar macOS
+
+```bash
+./src/tools/runner/menubar/install.sh
+```
+
+Un point 🟢 (runners actifs) ou 🔴 (kill switch actif) apparaît dans la menubar.
+Un clic gauche bascule directement l'état. Un clic droit ouvre les commandes et les logs.
+`STOP TOUT` crée `~/.config/pk-runners.disabled`, arrête les services et ferme Canary.
 
 > launchd ne déclenche le runner que si ton Mac est allumé. Le plugin garde la
 > queue en mémoire donc rien n'est perdu : le prochain run prend le relais.

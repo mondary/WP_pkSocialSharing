@@ -119,6 +119,21 @@ async function releaseAndExit(cfg, browser, page, postId, reason, code) {
 		process.exit(0);
 	}
 
+	let next;
+	try {
+		const r = await wpCall(cfg, 'GET', 'x-browser/next');
+		if (!r.ok) { log(`ERREUR /next HTTP ${r.status}: ${JSON.stringify(r.data)}`); process.exit(1); }
+		next = r.data;
+	} catch (e) {
+		log(`ERREUR /next: ${e.message}`);
+		process.exit(3);
+	}
+
+	if (next.empty) {
+		log(`RIEN (${next.reason || 'empty'})`);
+		process.exit(0);
+	}
+
 	let browser;
 	try {
 		await ensureCanary(cfg);
@@ -126,21 +141,6 @@ async function releaseAndExit(cfg, browser, page, postId, reason, code) {
 	} catch (e) {
 		log(`ERREUR CDP: ${e.message}`);
 		process.exit(3);
-	}
-
-	let next;
-	try {
-		const r = await wpCall(cfg, 'GET', 'x-browser/next');
-		if (!r.ok) { log(`ERREUR /next HTTP ${r.status}: ${JSON.stringify(r.data)}`); await browser.disconnect(); process.exit(1); }
-		next = r.data;
-	} catch (e) {
-		log(`ERREUR /next: ${e.message}`); await browser.disconnect(); process.exit(1);
-	}
-
-	if (next.empty) {
-		log(`RIEN (${next.reason || 'empty'})`);
-		await browser.disconnect();
-		process.exit(0);
 	}
 
 	const postId = next.post_id;
