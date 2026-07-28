@@ -22,5 +22,5 @@ cp "$MAIN/Web Data" "$DEDIC/Default/Web Data" 2>/dev/null && echo "✅ Web Data 
 
 echo ""
 echo "Session X copiée. Relance Chrome Canary via le runner :"
-echo "  ./tools/runner/start-chrome-macos.sh"
+echo "  ./src/tools/runner/start-chrome-macos.sh"
 echo "  (ou: launchctl load ~/Library/LaunchAgents/com.pk.chrome-canary-cdp.plist)"

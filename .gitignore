@@ -5,4 +5,4 @@ extension/release/
 build/
 .vscode/
 .qoder/
-tools/runner/node_modules/
+src/tools/runner/node_modules/

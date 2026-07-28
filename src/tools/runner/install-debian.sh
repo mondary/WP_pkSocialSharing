@@ -2,8 +2,8 @@
 # Installation turnkey du PK X Runner sur Debian/Ubuntu headless.
 #
 # Sur le serveur :
-#   git clone <repo> /tmp/pk  &&  sudo bash /tmp/pk/tools/runner/install-debian.sh
-#   (ou: scp tools/runner/ puis sudo bash install-debian.sh)
+#   git clone <repo> /tmp/pk  &&  sudo bash /tmp/pk/src/tools/runner/install-debian.sh
+#   (ou: scp src/tools/runner/ puis sudo bash install-debian.sh)
 #
 # Fait : paquets (nodejs chromium xvfb), user système, copie vers /opt/pk-x-runner,
 #        config interactive, units systemd (Chromium CDP + runner + timer), démarrage.
@@ -17,7 +17,7 @@ LOG_FILE="/var/log/pk-x-runner.log"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 [[ $EUID -eq 0 ]] || { echo "▶ Lance en root : sudo bash $0"; exit 1; }
-[[ -f "$SRC_DIR/pk-x-runner.js" ]] || { echo "▶ $SRC_DIR ne contient pas pk-x-runner.js — lance depuis tools/runner/"; exit 1; }
+[[ -f "$SRC_DIR/pk-x-runner.js" ]] || { echo "▶ $SRC_DIR ne contient pas pk-x-runner.js — lance depuis src/tools/runner/"; exit 1; }
 
 echo "=== 1/7 Paquets (nodejs, chromium, xvfb) ==="
 export DEBIAN_FRONTEND=noninteractive

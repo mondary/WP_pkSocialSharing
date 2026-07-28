@@ -43,7 +43,7 @@ En cas d'erreur, stderr contient `{"error":"..."}` et le code sortie est non nul
 Dans **WP Admin → PK SocialSharing → Dashboard → Traduction** :
 
 1. Provider : `Apple FoundationModels (macOS 26+, local)`
-2. Chemin du binaire : `/chemin/absolu/vers/tools/translator/apple-translator/apple-translator`
+2. Chemin du binaire : `/chemin/absolu/vers/src/tools/translator/apple-translator/apple-translator`
 3. Cliquer **Tester la traduction** pour valider.
 
 Le plugin appelle ensuite le binaire pour chaque partage dont la langue cible

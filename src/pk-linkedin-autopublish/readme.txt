@@ -82,7 +82,7 @@ Fonctionnalites :
 * Providers: DeepL, MyMemory (gratuit sans CB), Gemini, ZAI/GLM, OpenCode, OpenAI-compat local (LM Studio/mlx_lm/llama.cpp) et Apple FoundationModels natif macOS 26+
 * Cache de traduction par hash de contenu (1 traduction par version d'article)
 * Section de configuration globale dans le Dashboard + bouton de test
-* Helper Swift apple-translator pour Apple FoundationModels (tools/translator/apple-translator/)
+* Helper Swift apple-translator pour Apple FoundationModels (src/tools/translator/apple-translator/)
 
 = 1.1.9 =
 * Runner navigateur X: queue REST + token + plafond quotidien pour automatiser le partage X via un cron local sur ton Mac sans credits API

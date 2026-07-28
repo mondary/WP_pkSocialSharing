@@ -4,7 +4,7 @@
 // Utilise uniquement /next pour l'énumération (texte traduit, templates respectés).
 // Si le plafond quotidien est atteint, il attend et réessaie.
 //
-// Usage: node tools/runner/pk-x-catchup.js
+// Usage: node src/tools/runner/pk-x-catchup.js
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
@@ -21,7 +21,7 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 function loadConfig() {
 	if (!fs.existsSync(CONFIG_PATH)) {
 		console.error(`Config manquante: ${CONFIG_PATH}`);
-		console.error('Copie tools/runner/config.example.json vers ~/.config/pk-x-runner.json et remplis-le.');
+		console.error('Copie src/tools/runner/config.example.json vers ~/.config/pk-x-runner.json et remplis-le.');
 		process.exit(2);
 	}
 	try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); }

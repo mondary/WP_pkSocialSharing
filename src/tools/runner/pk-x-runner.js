@@ -14,7 +14,7 @@ const NAMESPACE = 'pksocialsharing/v1';
 function loadConfig() {
 	if (!fs.existsSync(CONFIG_PATH)) {
 		console.error(`Config manquante: ${CONFIG_PATH}`);
-		console.error('Copie tools/runner/config.example.json vers ~/.config/pk-x-runner.json et remplis-le.');
+		console.error('Copie src/tools/runner/config.example.json vers ~/.config/pk-x-runner.json et remplis-le.');
 		process.exit(2);
 	}
 	try {

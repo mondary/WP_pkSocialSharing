@@ -48,7 +48,7 @@ Donc zéro risque de double-post ou de rafale, même si le cron se déclenche de
 ```bash
 brew install node
 brew install --cask google-chrome@canary   # navigateur dédié à l'automatisation
-cd tools/runner
+cd src/tools/runner
 npm install
 ```
 
@@ -62,7 +62,7 @@ WP Admin → PK SocialSharing → onglet **X** → carte « Runner navigateur »
 
 ```bash
 mkdir -p ~/.config
-cp tools/runner/config.example.json ~/.config/pk-x-runner.json
+cp src/tools/runner/config.example.json ~/.config/pk-x-runner.json
 $EDITOR ~/.config/pk-x-runner.json
 #   wp_url        = https://ton-site.com
 #   runner_token  = <le token copié>
@@ -72,8 +72,8 @@ $EDITOR ~/.config/pk-x-runner.json
 ### 4. Lancer Chrome Canary en mode pilotable (1er lancement)
 
 ```bash
-chmod +x tools/runner/start-chrome-macos.sh
-./tools/runner/start-chrome-macos.sh
+chmod +x src/tools/runner/start-chrome-macos.sh
+./src/tools/runner/start-chrome-macos.sh
 ```
 
 `start-chrome-macos.sh` lance **Google Chrome Canary** (pas Chrome stable) sur le
@@ -92,7 +92,7 @@ suivantes réutilisent la session (cookies persistés dans le profil Canary déd
 ### 5. Test manuel
 
 ```bash
-node tools/runner/pk-x-runner.js
+node src/tools/runner/pk-x-runner.js
 tail -f ~/.local/log/pk-x-runner.log
 ```
 
@@ -101,20 +101,20 @@ le tweet est publié automatiquement, puis l'onglet se ferme.
 
 ### 6. Automatiser avec launchd (Chrome Canary + runner)
 
-Les fichiers launchd sont pré-configurés dans `~/.local/config/`. Utiliser `tools/runner/runnerctl.sh` pour la gestion :
+Les fichiers launchd sont pré-configurés dans `~/.local/config/`. Utiliser `src/tools/runner/runnerctl.sh` pour la gestion :
 
 ```bash
 # Installer les services launchd (une seule fois)
-./tools/runner/runnerctl.sh start
+./src/tools/runner/runnerctl.sh start
 
 # Voir le statut
-./tools/runner/runnerctl.sh status
+./src/tools/runner/runnerctl.sh status
 
 # Suivre les logs en temps réel
-./tools/runner/runnerctl.sh logs
+./src/tools/runner/runnerctl.sh logs
 
 # Redémarrer les services
-./tools/runner/runnerctl.sh restart
+./src/tools/runner/runnerctl.sh restart
 ```
 
 Le runner X se déclenche aux heures de publication (10:05, 11:05, 12:05, 13:05, 14:05 —
@@ -136,7 +136,7 @@ persistant sur le port 9222 via son propre service launchd.
 ### Méthode rapide — script turnkey
 
 ```bash
-git clone <repo> /tmp/pk && sudo bash /tmp/pk/tools/runner/install-debian.sh
+git clone <repo> /tmp/pk && sudo bash /tmp/pk/src/tools/runner/install-debian.sh
 ```
 
 Installe tout (Node + Chromium + Xvfb, user, config, services systemd). Reste ensuite
@@ -146,7 +146,7 @@ l'init de la session X (étape 3). Méthode manuelle détaillée ci-dessous.
 
 ```bash
 sudo apt install -y nodejs npm chromium xvfb
-cd tools/runner
+cd src/tools/runner
 sudo mkdir -p /opt/pk-x-runner && sudo cp -a . /opt/pk-x-runner/
 cd /opt/pk-x-runner && sudo npm install --omit=dev
 ```
@@ -257,7 +257,7 @@ Logs : `tail -f /var/log/pk-x-runner.log`
 Il ne requiert pas l'ancienne API Medium.
 
 1. Dans `WP Admin > PK SocialSharing > Medium > Runner navigateur Medium`, active la queue et génère le token.
-2. Copie `tools/runner/medium-config.example.json` vers `~/.config/pk-medium-runner.json`, puis renseigne `wp_url` et `runner_token`.
+2. Copie `src/tools/runner/medium-config.example.json` vers `~/.config/pk-medium-runner.json`, puis renseigne `wp_url` et `runner_token`.
 3. Dans le Chrome dédié, connecte-toi une fois à `medium.com`.
 4. Lance le runner en daemon (voir ci-dessous).
 
@@ -274,13 +274,13 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.pk.x-runner.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.pk.medium-runner.plist
 ```
 
-Gestion simple via `tools/runner/runnerctl.sh` :
+Gestion simple via `src/tools/runner/runnerctl.sh` :
 
 ```bash
-./tools/runner/runnerctl.sh status    # Voir les services et processus
-./tools/runner/runnerctl.sh logs      # Suivre les logs (Ctrl+C pour quitter)
-./tools/runner/runnerctl.sh logs x    # Logs du runner X uniquement
-./tools/runner/runnerctl.sh restart   # Redémarrer les deux runners
+./src/tools/runner/runnerctl.sh status    # Voir les services et processus
+./src/tools/runner/runnerctl.sh logs      # Suivre les logs (Ctrl+C pour quitter)
+./src/tools/runner/runnerctl.sh logs x    # Logs du runner X uniquement
+./src/tools/runner/runnerctl.sh restart   # Redémarrer les deux runners
 ```
 
 Logs : `~/.local/log/pk-x-runner.log` et `~/.local/log/pk-medium-runner.log`

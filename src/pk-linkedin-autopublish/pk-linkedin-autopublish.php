@@ -1699,7 +1699,7 @@ final class PKLIAP_Plugin {
 											<?php endforeach; ?>
 										</select>
 										<p class="description" style="margin-top:6px;">
-											Recos : <strong>DeepL</strong> = qualité ref (CB requise, 500k chars/mois gratuit). <strong>MyMemory</strong> = gratuit sans CB. <strong>Apple FoundationModels</strong> = local macOS 26+, zéro coût, 100% privé (compile <code>tools/translator/apple-translator/build.sh</code>). <strong>OpenAI-compat</strong> = local via LM Studio/mlx_lm/llama.cpp.
+											Recos : <strong>DeepL</strong> = qualité ref (CB requise, 500k chars/mois gratuit). <strong>MyMemory</strong> = gratuit sans CB. <strong>Apple FoundationModels</strong> = local macOS 26+, zéro coût, 100% privé (compile <code>src/tools/translator/apple-translator/build.sh</code>). <strong>OpenAI-compat</strong> = local via LM Studio/mlx_lm/llama.cpp.
 										</p>
 									</td>
 								</tr>
@@ -1827,7 +1827,7 @@ final class PKLIAP_Plugin {
 									<td>
 										<input class="regular-text" type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[translate_apple_binary]" value="<?php echo esc_attr((string)$opt['translate_apple_binary']); ?>" placeholder="/chemin/absolu/vers/apple-translator"/>
 										<p class="description">
-											Helper Swift natif macOS 26+. Compiler avec : <code>tools/translator/apple-translator/build.sh</code>.<br/>
+											Helper Swift natif macOS 26+. Compiler avec : <code>src/tools/translator/apple-translator/build.sh</code>.<br/>
 											Puis coller le chemin du binaire ci-dessus. Aucune clé API, 100% local.
 										</p>
 									</td>
@@ -2019,7 +2019,7 @@ final class PKLIAP_Plugin {
 					<form method="post" action="options.php" class="pks-card pks-card--wide">
 						<div class="pks-card-title">Runner navigateur (sans crédits API)</div>
 						<?php settings_fields('pkliap'); ?>
-						<p class="pks-info" style="margin:0 0 12px;">Un runner local (Mac via <code>launchd</code>, ou Linux via <code>systemd</code>) interroge WordPress, récupère les articles en attente X, et les publie en pilotant <strong>ton vrai Chrome</strong> via CDP (Chrome DevTools Protocol) — fingerprint humain, zéro crédit API, zéro risque de ban automation. Voir <code>tools/runner/README.md</code>.</p>
+						<p class="pks-info" style="margin:0 0 12px;">Un runner local (Mac via <code>launchd</code>, ou Linux via <code>systemd</code>) interroge WordPress, récupère les articles en attente X, et les publie en pilotant <strong>ton vrai Chrome</strong> via CDP (Chrome DevTools Protocol) — fingerprint humain, zéro crédit API, zéro risque de ban automation. Voir <code>src/tools/runner/README.md</code>.</p>
 						<div class="pks-checkrow">
 							<span class="pks-pill pks-pill--ok">AUTO</span>
 							<div>
@@ -7205,8 +7205,8 @@ final class PKLIAP_Plugin {
 		if ($binary === '') {
 			// Auto-detection d'un helper sibling typique.
 			$candidates = [
-				dirname(__DIR__) . '/tools/translator/apple-translator/apple-translator',
-				ABSPATH . '../tools/translator/apple-translator/apple-translator',
+				dirname(__DIR__) . '/src/tools/translator/apple-translator/apple-translator',
+				ABSPATH . '../src/tools/translator/apple-translator/apple-translator',
 			];
 			foreach ($candidates as $c) {
 				if (file_exists($c) && is_executable($c)) {
@@ -7216,7 +7216,7 @@ final class PKLIAP_Plugin {
 			}
 		}
 		if ($binary === '' || !file_exists($binary) || !is_executable($binary)) {
-			return new WP_Error('pkliap_tr_apple_nobinary', 'Helper Apple introuvable. Compile tools/translator/apple-translator/build.sh puis renseigne le chemin.');
+			return new WP_Error('pkliap_tr_apple_nobinary', 'Helper Apple introuvable. Compile src/tools/translator/apple-translator/build.sh puis renseigne le chemin.');
 		}
 
 		$payload = wp_json_encode([
