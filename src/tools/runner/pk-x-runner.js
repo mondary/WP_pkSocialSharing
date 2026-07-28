@@ -9,6 +9,7 @@ process.on('unhandledRejection', r => { log(`UNHANDLED REJECTION: ${r}`); proces
 
 const CONFIG_PATH = process.env.PK_RUNNER_CONF || path.join(process.env.HOME || '/root', '.config', 'pk-x-runner.json');
 const LOG_PATH = process.env.PK_RUNNER_LOG || path.join(process.env.HOME || '/root', '.local', 'log', 'pk-x-runner.log');
+const KILL_SWITCH = path.join(process.env.HOME || '/root', '.config', 'pk-runners.disabled');
 const NAMESPACE = 'pksocialsharing/v1';
 
 function loadConfig() {
@@ -110,6 +111,11 @@ async function releaseAndExit(cfg, browser, page, postId, reason, code) {
 	const pauseEnd = 9;
 	if (hour < pauseEnd || hour >= pauseStart) {
 		log(`PAUSE NOCTURNE (${hour}h) — hors fenêtre ${pauseEnd}h-${pauseStart}h.`);
+		process.exit(0);
+	}
+
+	if (fs.existsSync(KILL_SWITCH)) {
+		log(`KILL SWITCH actif (${KILL_SWITCH}) — arrêt.`);
 		process.exit(0);
 	}
 

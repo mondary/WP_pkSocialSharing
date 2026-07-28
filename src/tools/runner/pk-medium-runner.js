@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 
 const CONFIG_PATH = process.env.PK_MEDIUM_RUNNER_CONF || path.join(process.env.HOME || '/root', '.config', 'pk-medium-runner.json');
 const LOG_PATH = process.env.PK_MEDIUM_RUNNER_LOG || path.join(process.env.HOME || '/root', '.local', 'log', 'pk-medium-runner.log');
+const KILL_SWITCH = path.join(process.env.HOME || '/root', '.config', 'pk-runners.disabled');
 const NAMESPACE = 'pksocialsharing/v1';
 const POLL_INTERVAL_MS = 30000;
 const ERROR_BACKOFF_MS = 60000;
@@ -196,10 +197,19 @@ async function daemon() {
 		if (!config[key]) throw new Error(`Champ "${key}" manquant dans ${CONFIG_PATH}`);
 	}
 
+	if (fs.existsSync(KILL_SWITCH)) {
+		log(`KILL SWITCH actif (${KILL_SWITCH}) — arrêt.`);
+		return;
+	}
+
 	log(`Démarrage daemon (poll ${POLL_INTERVAL_MS / 1000}s, wp=${config.wp_url})`);
 	let browser = await connectBrowser(config);
 
 	while (!stopping) {
+		if (fs.existsSync(KILL_SWITCH)) {
+			log(`KILL SWITCH actif (${KILL_SWITCH}) — arrêt daemon.`);
+			break;
+		}
 		try {
 			const hasWork = await processNext(config, browser);
 			if (!hasWork) {
