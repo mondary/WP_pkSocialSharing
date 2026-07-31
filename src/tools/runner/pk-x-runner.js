@@ -182,11 +182,12 @@ async function releaseAndExit(cfg, browser, page, postId, reason, code) {
 		if (!clicked) throw new Error('bouton tweet introuvable');
 
 		const clickTimeout = cfg.click_timeout_ms || 12000;
-		await page.waitForFunction(
-			() => !document.querySelector('[data-testid=tweetButton]') || location.href.includes('/status/'),
-			{ timeout: clickTimeout }
-		).catch(() => {
-			throw new Error(`confirmation post absente apres ${clickTimeout}ms`);
+		await page.waitForFunction(() => {
+			const messages = [...document.querySelectorAll('[role="alert"], [data-testid="toast"]')]
+				.map((element) => (element.innerText || element.textContent || '').toLowerCase());
+			return messages.some((message) => /(?:post|tweet|publication).{0,40}(?:sent|envoy|publi)|(?:sent|envoy|publi).{0,40}(?:post|tweet|publication)/.test(message));
+		}, { timeout: clickTimeout }).catch(() => {
+			throw new Error(`confirmation explicite X absente apres ${clickTimeout}ms`);
 		});
 		await sleep(2000);
 	} catch (e) {

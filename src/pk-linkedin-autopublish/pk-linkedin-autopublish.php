@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.3.7
+ * Version: 1.3.12
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -30,7 +30,9 @@ final class PKLIAP_Plugin {
 	const META_X_SHARED_AT = '_pkliap_x_shared_at';
 	const META_X_POST_ID = '_pkliap_x_post_id';
 	const META_X_BROWSER_CLAIMED_AT = '_pkliap_x_browser_claimed_at';
+	const META_X_BROWSER_SKIPPED_AT = '_pkliap_x_browser_skipped_at';
 	const META_MEDIUM_BROWSER_CLAIMED_AT = '_pkliap_medium_browser_claimed_at';
+	const META_MEDIUM_BROWSER_SKIPPED_AT = '_pkliap_medium_browser_skipped_at';
 	const META_FB_SHARED_AT = '_pkliap_fb_shared_at';
 	const META_FB_POST_ID = '_pkliap_fb_post_id';
 	const META_IG_SHARED_AT = '_pkliap_ig_shared_at';
@@ -463,6 +465,21 @@ final class PKLIAP_Plugin {
 			'permission_callback' => [__CLASS__, 'x_browser_rest_check'],
 			'callback' => [__CLASS__, 'rest_x_browser_status'],
 		]);
+		register_rest_route(self::SYNC_NAMESPACE, '/x-browser/queue', [
+			'methods' => 'GET',
+			'permission_callback' => [__CLASS__, 'x_browser_rest_check'],
+			'callback' => [__CLASS__, 'rest_x_browser_queue'],
+		]);
+		register_rest_route(self::SYNC_NAMESPACE, '/x-browser/clear-queue', [
+			'methods' => 'POST',
+			'permission_callback' => [__CLASS__, 'x_browser_rest_check'],
+			'callback' => [__CLASS__, 'rest_x_browser_clear_queue'],
+		]);
+		register_rest_route(self::SYNC_NAMESPACE, '/x-browser/reset-daily-count', [
+			'methods' => 'POST',
+			'permission_callback' => [__CLASS__, 'x_browser_rest_check'],
+			'callback' => [__CLASS__, 'rest_x_browser_reset_daily_count'],
+		]);
 	}
 
 	public static function register_medium_browser_routes(): void {
@@ -473,6 +490,16 @@ final class PKLIAP_Plugin {
 				'callback' => [__CLASS__, $callback],
 			]);
 		}
+		register_rest_route(self::SYNC_NAMESPACE, '/medium-browser/queue', [
+			'methods' => 'GET',
+			'permission_callback' => [__CLASS__, 'medium_browser_rest_check'],
+			'callback' => [__CLASS__, 'rest_medium_browser_queue'],
+		]);
+		register_rest_route(self::SYNC_NAMESPACE, '/medium-browser/clear-queue', [
+			'methods' => 'POST',
+			'permission_callback' => [__CLASS__, 'medium_browser_rest_check'],
+			'callback' => [__CLASS__, 'rest_medium_browser_clear_queue'],
+		]);
 	}
 
 	public static function medium_browser_rest_check(WP_REST_Request $request): bool {
@@ -519,15 +546,22 @@ final class PKLIAP_Plugin {
 			'order' => 'DESC',
 			'no_found_rows' => true,
 			'meta_query' => [
-				'relation' => 'OR',
+				'relation' => 'AND',
 				[
-					'key' => self::META_X_SHARED_AT,
-					'compare' => 'NOT EXISTS',
+					'relation' => 'OR',
+					[
+						'key' => self::META_X_SHARED_AT,
+						'compare' => 'NOT EXISTS',
+					],
+					[
+						'key' => self::META_X_SHARED_AT,
+						'value' => '0',
+						'compare' => '<=',
+					],
 				],
 				[
-					'key' => self::META_X_SHARED_AT,
-					'value' => '0',
-					'compare' => '<=',
+					'key' => self::META_X_BROWSER_SKIPPED_AT,
+					'compare' => 'NOT EXISTS',
 				],
 			],
 		]);
@@ -600,6 +634,62 @@ final class PKLIAP_Plugin {
 		], 200);
 	}
 
+	public static function rest_x_browser_queue(WP_REST_Request $request): WP_REST_Response {
+		return new WP_REST_Response(['items' => self::x_browser_queue_items(self::get_options(), 50)], 200);
+	}
+
+	private static function x_browser_queue_items(array $opt, int $limit): array {
+		$post_types = array_values(array_filter((array)($opt['post_type_whitelist'] ?? []))) ?: ['post'];
+		$q = new WP_Query([
+			'post_type' => $post_types,
+			'post_status' => 'publish',
+			'posts_per_page' => $limit,
+			'orderby' => 'date',
+			'order' => 'DESC',
+			'no_found_rows' => true,
+			'meta_query' => [
+				'relation' => 'AND',
+				[
+					'relation' => 'OR',
+					['key' => self::META_X_SHARED_AT, 'compare' => 'NOT EXISTS'],
+					['key' => self::META_X_SHARED_AT, 'value' => '0', 'compare' => '<='],
+				],
+				['key' => self::META_X_BROWSER_SKIPPED_AT, 'compare' => 'NOT EXISTS'],
+			],
+		]);
+		$items = [];
+		foreach ($q->posts as $post) {
+			$claimed_at = (int)get_post_meta($post->ID, self::META_X_BROWSER_CLAIMED_AT, true);
+			$items[] = [
+				'id' => (int)$post->ID,
+				'title' => html_entity_decode(wp_strip_all_tags(get_the_title($post)), ENT_QUOTES, get_bloginfo('charset')),
+				'date' => get_post_time('c', true, $post),
+				'claimed' => $claimed_at > 0 && (time() - $claimed_at) < (15 * MINUTE_IN_SECONDS),
+			];
+		}
+		return $items;
+	}
+
+	public static function rest_x_browser_clear_queue(WP_REST_Request $request): WP_REST_Response {
+		$queue = self::x_browser_queue_items(self::get_options(), -1);
+		$now = time();
+		foreach ($queue as $item) {
+			update_post_meta((int)$item['id'], self::META_X_BROWSER_SKIPPED_AT, $now);
+			delete_post_meta((int)$item['id'], self::META_X_BROWSER_CLAIMED_AT);
+		}
+		self::x_browser_record_run('queue_cleared');
+		return new WP_REST_Response(['ok' => true, 'cleared' => count($queue)], 200);
+	}
+
+	public static function rest_x_browser_reset_daily_count(WP_REST_Request $request): WP_REST_Response {
+		self::update_options([
+			'x_browser_shared_today_count' => 0,
+			'x_browser_shared_today_date' => wp_date('Y-m-d'),
+		]);
+		self::x_browser_record_run('daily_count_reset');
+		return new WP_REST_Response(['ok' => true, 'shared_today' => 0], 200);
+	}
+
 	private static function x_browser_daily_count(array $opt): int {
 		$today = wp_date('Y-m-d');
 		if ((string)$opt['x_browser_shared_today_date'] !== $today) {
@@ -641,9 +731,13 @@ final class PKLIAP_Plugin {
 			'order' => 'DESC',
 			'no_found_rows' => true,
 			'meta_query' => [
-				'relation' => 'OR',
-				['key' => self::META_MEDIUM_SHARED_AT, 'compare' => 'NOT EXISTS'],
-				['key' => self::META_MEDIUM_SHARED_AT, 'value' => '0', 'compare' => '<='],
+				'relation' => 'AND',
+				[
+					'relation' => 'OR',
+					['key' => self::META_MEDIUM_SHARED_AT, 'compare' => 'NOT EXISTS'],
+					['key' => self::META_MEDIUM_SHARED_AT, 'value' => '0', 'compare' => '<='],
+				],
+				['key' => self::META_MEDIUM_BROWSER_SKIPPED_AT, 'compare' => 'NOT EXISTS'],
 			],
 		]);
 		$now = time();
@@ -689,6 +783,53 @@ final class PKLIAP_Plugin {
 	public static function rest_medium_browser_status(WP_REST_Request $request): WP_REST_Response {
 		$opt = self::get_options();
 		return new WP_REST_Response(['enabled' => !empty($opt['medium_browser_enabled']), 'daily_cap' => (int)$opt['medium_browser_daily_cap'], 'shared_today' => self::medium_browser_daily_count($opt), 'last_run_at' => (int)$opt['medium_browser_last_run_at'], 'last_status' => (string)$opt['medium_browser_last_status']], 200);
+	}
+
+	public static function rest_medium_browser_queue(WP_REST_Request $request): WP_REST_Response {
+		return new WP_REST_Response(['items' => self::medium_browser_queue_items(self::get_options(), 50)], 200);
+	}
+
+	private static function medium_browser_queue_items(array $opt, int $limit): array {
+		$post_types = array_values(array_filter((array)($opt['post_type_whitelist'] ?? []))) ?: ['post'];
+		$q = new WP_Query([
+			'post_type' => $post_types,
+			'post_status' => 'publish',
+			'posts_per_page' => $limit,
+			'orderby' => 'date',
+			'order' => 'DESC',
+			'no_found_rows' => true,
+			'meta_query' => [
+				'relation' => 'AND',
+				[
+					'relation' => 'OR',
+					['key' => self::META_MEDIUM_SHARED_AT, 'compare' => 'NOT EXISTS'],
+					['key' => self::META_MEDIUM_SHARED_AT, 'value' => '0', 'compare' => '<='],
+				],
+				['key' => self::META_MEDIUM_BROWSER_SKIPPED_AT, 'compare' => 'NOT EXISTS'],
+			],
+		]);
+		$now = time();
+		$items = [];
+		foreach ($q->posts as $post) {
+			$claimed_at = (int)get_post_meta($post->ID, self::META_MEDIUM_BROWSER_CLAIMED_AT, true);
+			$items[] = [
+				'id' => (int)$post->ID,
+				'title' => html_entity_decode(wp_strip_all_tags(get_the_title($post)), ENT_QUOTES, get_bloginfo('charset')),
+				'claimed' => $claimed_at > 0 && ($now - $claimed_at) < (15 * MINUTE_IN_SECONDS),
+			];
+		}
+		return $items;
+	}
+
+	public static function rest_medium_browser_clear_queue(WP_REST_Request $request): WP_REST_Response {
+		$queue = self::medium_browser_queue_items(self::get_options(), -1);
+		$now = time();
+		foreach ($queue as $item) {
+			update_post_meta((int)$item['id'], self::META_MEDIUM_BROWSER_SKIPPED_AT, $now);
+			delete_post_meta((int)$item['id'], self::META_MEDIUM_BROWSER_CLAIMED_AT);
+		}
+		self::medium_browser_record_run('queue_cleared');
+		return new WP_REST_Response(['ok' => true, 'cleared' => count($queue)], 200);
 	}
 
 	private static function medium_browser_daily_count(array $opt): int {
@@ -2076,7 +2217,7 @@ final class PKLIAP_Plugin {
 
 					<div class="pks-card pks-card--wide">
 						<div class="pks-card-title">Test X</div>
-							<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié. <strong>Publier maintenant</strong> utilise l’API X et nécessite des crédits. <strong>Publier via navigateur</strong> ouvre X avec le texte prérempli et ne consomme pas de crédits API.</p>
+							<p class="pks-info" style="margin:0 0 12px;">Choisissez un article publié. <?php if (!empty($opt['x_browser_enabled'])): ?><strong>Remettre dans la queue</strong> confie la publication au runner navigateur, sans crédits API.<?php else: ?><strong>Publier maintenant</strong> utilise l’API X et nécessite des crédits.<?php endif; ?> <strong>Publier via navigateur</strong> ouvre X avec le texte prérempli et ne consomme pas de crédits API.</p>
 							<?php
 							$x_test_limit = max(20, absint($_GET['test_limit_x'] ?? 0) ?: 20);
 							$posts = get_posts([
@@ -2109,6 +2250,7 @@ final class PKLIAP_Plugin {
 										$x_status = $x_shared_at ? ('Partagé le ' . esc_html(wp_date('Y-m-d H:i', $x_shared_at)) . ($x_post_id ? '<br/><code style="font-size:11px;">' . esc_html($x_post_id) . '</code>' : '') . ($x_post_url ? '<br/><a href="' . esc_url($x_post_url) . '" target="_blank" rel="noopener">Voir sur X</a>' : '')) : 'Jamais partagé';
 										$x_action_url = wp_nonce_url(self::admin_url_action('pkliap_test_post') . '&post_id=' . (int)$p->ID . '&network=x', 'pkliap_test_post_' . (int)$p->ID);
 										$x_intent_url = wp_nonce_url(self::admin_url_action('pkliap_x_intent') . '&post_id=' . (int)$p->ID, 'pkliap_x_intent_' . (int)$p->ID);
+										$x_action_label = !empty($opt['x_browser_enabled']) ? 'Remettre dans la queue' : 'Publier maintenant';
 										$edit_url = get_edit_post_link($p->ID, '');
 										$thumb_html = get_the_post_thumbnail($p->ID, [48, 48], ['style' => 'width:48px;height:48px;object-fit:cover;border-radius:4px;']);
 										?>
@@ -2124,7 +2266,7 @@ final class PKLIAP_Plugin {
 											</td>
 											<td><?php echo $x_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
 											<td>
-												<a class="button button-secondary" href="<?php echo esc_url($x_action_url); ?>">Publier maintenant</a>
+											<a class="button button-secondary" href="<?php echo esc_url($x_action_url); ?>"><?php echo esc_html($x_action_label); ?></a>
 												<a class="button" style="margin-top:6px;" href="<?php echo esc_url($x_intent_url); ?>" target="_blank" rel="noopener">Publier via navigateur</a>
 											</td>
 										</tr>
@@ -4168,6 +4310,16 @@ final class PKLIAP_Plugin {
 
 		try {
 			if ($network === 'x') {
+				$opt = self::get_options();
+				if (!empty($opt['x_browser_enabled'])) {
+					// Le runner navigateur ne sélectionne que les articles sans cet horodatage.
+					delete_post_meta($post_id, self::META_X_SHARED_AT);
+					delete_post_meta($post_id, self::META_X_BROWSER_CLAIMED_AT);
+					delete_post_meta($post_id, self::META_X_BROWSER_SKIPPED_AT);
+					self::set_flash('notice', 'Article remis dans la queue du runner navigateur X. Il sera traité lors de son prochain passage.');
+					wp_safe_redirect(self::settings_url(['network' => $network]));
+					exit;
+				}
 				$res = self::share_post_to_x($post_id, true);
 			} elseif ($network === 'facebook') {
 				$res = self::share_post_to_facebook($post_id, true);
@@ -4181,6 +4333,7 @@ final class PKLIAP_Plugin {
 					// Mode runner navigateur: on remet l'article dans la queue du runner.
 					delete_post_meta($post_id, self::META_MEDIUM_SHARED_AT);
 					delete_post_meta($post_id, self::META_MEDIUM_BROWSER_CLAIMED_AT);
+					delete_post_meta($post_id, self::META_MEDIUM_BROWSER_SKIPPED_AT);
 					self::set_flash('notice', 'Article remis dans la queue du runner navigateur Medium. Relance le runner pour le publier.');
 					wp_safe_redirect(self::settings_url(['network' => $network]));
 					exit;

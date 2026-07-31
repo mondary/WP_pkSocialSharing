@@ -33,6 +33,22 @@ case "${1:-status}" in
         sleep 2
         $0 start
         ;;
+    run-x)
+        if [[ -f "$KILL_SWITCH" ]]; then
+            echo "Kill switch actif. Démarre les runners avant de lancer la queue X."
+            exit 1
+        fi
+        launchctl kickstart -k "gui/$USER_ID/com.pk.x-runner"
+        echo "Runner X déclenché immédiatement."
+        ;;
+    run-medium)
+        if [[ -f "$KILL_SWITCH" ]]; then
+            echo "Kill switch actif. Démarre les runners avant de lancer la queue Medium."
+            exit 1
+        fi
+        launchctl kickstart -k "gui/$USER_ID/com.pk.medium-runner"
+        echo "Runner Medium déclenché immédiatement."
+        ;;
     status)
         if [[ -f "$KILL_SWITCH" ]]; then
             echo "Kill switch : ACTIF ($KILL_SWITCH)"
@@ -58,7 +74,7 @@ case "${1:-status}" in
         echo "Kill switch retiré. Utilise '$0 start' pour charger les runners."
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|logs [x|medium|all]|enable}"
+        echo "Usage: $0 {start|stop|restart|run-x|run-medium|status|logs [x|medium|all]|enable}"
         exit 1
         ;;
 esac

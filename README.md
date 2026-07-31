@@ -113,6 +113,11 @@ Mise à jour live :
 
 ## 🧾 Changelog
  
+- `1.3.12` : contrôleur macOS, contrôles de queue Medium équivalents à X.
+- `1.3.11` : runner X, confirmation explicite obligatoire avant marquage publié et réinitialisation du compteur quotidien.
+- `1.3.10` : vue de queue X macOS défilante, titres décodés et claims expirés corrigés.
+- `1.3.9` : contrôleur macOS, consultation et purge confirmée de la queue X.
+- `1.3.8` : bouton X adapté au runner navigateur, qui remet l'article dans la queue au lieu de forcer l'API X.
 - `1.3.7` : runner Medium transformé en daemon — poll automatique toutes les 30 s, un clic sur « Publier maintenant » dans WordPress suffit.
 - `1.3.6` : bouton « Publier maintenant » Medium adapté au runner — remet l'article dans la queue au lieu de tenter l'API retirée.
 - `1.3.5` : restauration de la section Publication Medium (statut + traduction) — seul le bloc API obsolète (integration token) reste supprimé.
