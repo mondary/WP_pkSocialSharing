@@ -18,8 +18,8 @@
 - WP-CLI fallback to retry shares without relying on WP-Cron.
 - Centralized Meta setup: OAuth connection, long-lived token, Facebook Page and Instagram account detection.
 - X publishing through the API or browser fallback when API credits are not available.
-- X browser runner (CDP): token-authenticated REST queue + daily cap, automatable via a local `launchd`/`systemd` cron on your machine (zero API credits, human fingerprint). Uses **Chrome Canary** as a dedicated browser that posts in the background without disrupting your main Chrome. See [`src/tools/runner/`](src/tools/runner/README.md).
-- macOS menu bar controller: left-click 🟢/🔴 to enable or stop all runners, right-click for logs. Chrome Canary opens only when an article is waiting to be published.
+- X browser runner: token-authenticated REST queue + daily cap, automatable via a local `launchd` cron on your machine (zero API credits, human fingerprint). Posts through **ego-browser (EgoLite)** in an isolated task space that inherits your X session, without disrupting your main browser. See [`src/tools/runner/`](src/tools/runner/README.md).
+- macOS menu bar controller: left-click 🟢/🔴 to enable or stop all runners, right-click for logs.
 
 ## 🧠 Usage
 
@@ -36,7 +36,7 @@ Automatic sharing runs when the post switches to `publish`. Already-published po
 - `Dashboard`: overview of scheduled/published posts and per-network status.
 - `Day`: daily publication tracking.
 - `LinkedIn`: LinkedIn OAuth, profile or organization Author URN, visibility, message format.
-- `X (Twitter)`: API keys, automatic mode when API credits are available, manual browser mode otherwise, or an external CDP runner (token + daily cap) for credit-free automation.
+- `X (Twitter)`: API keys, automatic mode when API credits are available, manual browser mode otherwise, or an external browser runner (token + daily cap) for credit-free automation.
 - `Facebook`: Page ID, Page Access Token, Page publishing with featured image when available.
 - `Instagram`: IG User ID, Access Token, publishing through the Instagram Graph API.
 - `Threads`: Threads User ID, Access Token, publishing through the Threads API.
@@ -133,5 +133,5 @@ Live update:
 ## 🔗 Links
 
 - FR README: [README.md](README.md)
-- X browser runner (CDP): [src/tools/runner/README.md](src/tools/runner/README.md)
+- X/Medium browser runner (ego-browser): [src/tools/runner/README.md](src/tools/runner/README.md)
 - Plugin source: [src/pk-linkedin-autopublish](src/pk-linkedin-autopublish)

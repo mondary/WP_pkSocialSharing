@@ -1,14 +1,13 @@
 #!/usr/bin/env node
-// pk-x-catchup.js — ONE-SHOT: rattrape le retard X en une fois.
+// pk-x-catchup.js — ONE-SHOT: rattrape le retard X en une fois (moteur ego-browser).
 //
 // Utilise uniquement /next pour l'énumération (texte traduit, templates respectés).
 // Si le plafond quotidien est atteint, il attend et réessaie.
 //
 // Usage: node src/tools/runner/pk-x-catchup.js
-const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { runEgo } = require('./ego-engine');
 
 process.on('uncaughtException', e => { log(`UNCAUGHT: ${e.message}`); process.exit(9); });
 process.on('unhandledRejection', r => { log(`UNHANDLED REJECTION: ${r}`); process.exit(9); });
@@ -17,6 +16,7 @@ const CONFIG_PATH = process.env.PK_RUNNER_CONF || path.join(process.env.HOME || 
 const LOG_PATH = process.env.PK_RUNNER_LOG || path.join(process.env.HOME || '/root', '.local', 'log', 'pk-x-runner.log');
 const NAMESPACE = 'pksocialsharing/v1';
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+const TASK_SPACE = 'pk-x-catchup';
 
 function loadConfig() {
 	if (!fs.existsSync(CONFIG_PATH)) {
@@ -51,45 +51,32 @@ async function wpCall(cfg, method, route, body) {
 	return { ok: res.ok, status: res.status, data };
 }
 
-async function ensureCanary(cfg) {
-	const base = cfg.browser_url.replace(/\/$/, '');
-	try { await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(3000) }); return; } catch (_) {}
-	const startScript = process.platform === 'darwin' ? 'start-chrome-macos.sh' : 'start-chromium-linux.sh';
-	log(`Navigateur down — démarrage via ${startScript}...`);
-	const script = path.join(__dirname, startScript);
-	if (!fs.existsSync(script)) { log(`ERREUR: ${script} introuvable`); process.exit(3); }
-	spawn(script, [], { detached: true, stdio: 'ignore', env: { ...process.env } }).unref();
-	for (let i = 0; i < 30; i++) {
-		await sleep(1000);
-		try { await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(2000) }); log('Navigateur démarré.'); return; }
-		catch (_) {}
+async function checkXSession(cfg) {
+	const r = await runEgo(cfg, `
+const task = await useOrCreateTaskSpace('${TASK_SPACE}')
+try {
+	await openOrReuseTab('https://x.com/home', { wait: true, timeout: 60 })
+	await wait(3.5)
+	const info = await pageInfo()
+	const loggedIn = await js(String.raw\`(() => !!document.querySelector('[data-testid="SideNav_NewTweet_Button"], [data-testid="AppTabBar_Home_Link"]'))()\`)
+	if (!loggedIn || /\\/login|\\/i\\/flow\\/login|\\/logout/.test(info.url || '')) {
+		cliLog('RESULT ' + JSON.stringify({ ok: true, loggedIn: false }))
+	} else {
+		await completeTaskSpace(task.id, { keep: false })
+		cliLog('RESULT ' + JSON.stringify({ ok: true, loggedIn: true }))
 	}
-	log(`ERREUR: le navigateur n'a pas démarré sur le port CDP. Lance-le: ./${startScript}`);
-	process.exit(3);
+} catch (e) {
+	cliLog('RESULT ' + JSON.stringify({ ok: false, error: String(e && e.message || e) }))
 }
-
-async function connectBrowser(cfg) {
-	const base = cfg.browser_url.replace(/\/$/, '');
-	const ver = await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(5000) });
-	const info = await ver.json();
-	if (!info.webSocketDebuggerUrl) throw new Error('webSocketDebuggerUrl absent de /json/version');
-	return puppeteer.connect({ browserWSEndpoint: info.webSocketDebuggerUrl, defaultViewport: null });
-}
-
-async function checkXSession(browser) {
-	const page = await browser.newPage();
-	try {
-		await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 });
-		await sleep(3500);
-		const loggedIn = await page.$('[data-testid="SideNav_NewTweet_Button"], [data-testid="AppTabBar_Home_Link"]');
-		if (!loggedIn || /\/login|\/i\/flow\/login|\/logout/.test(page.url())) {
-			log('ERREUR SESSION: pas connecté à X dans Canary.');
-			log('→ Ouvre Canary, connecte-toi à x.com, puis relance.');
-			return false;
-		}
-		log('Session X: OK (connecté).');
-		return true;
-	} finally { await page.close().catch(() => {}); }
+`);
+	if (!r.ok) { log(`ERREUR SESSION (ego): ${r.error}`); return false; }
+	if (!r.loggedIn) {
+		log('ERREUR SESSION: pas connecté à X dans EgoLite.');
+		log('→ Ouvre ego-browser (EgoLite), connecte-toi à x.com, puis relance.');
+		return false;
+	}
+	log('Session X: OK (connecté).');
+	return true;
 }
 
 async function enumerateViaNext(cfg) {
@@ -106,64 +93,57 @@ async function enumerateViaNext(cfg) {
 	return items;
 }
 
-async function postOne(browser, item, cfg) {
-	const page = await browser.newPage();
-	try {
-		await page.goto(item.intent_url, { waitUntil: 'networkidle2', timeout: 30000 });
-	} catch (e) {
-		await page.close().catch(() => {});
-		return { ok: false, reason: `navigation: ${e.message}` };
+async function postOne(cfg, item) {
+	const delayMin = cfg.human_delay_ms_min || 1500;
+	const delayMax = cfg.human_delay_ms_max || 4000;
+	const r = await runEgo(cfg, `
+const task = await useOrCreateTaskSpace('${TASK_SPACE}')
+try {
+	await openOrReuseTab(${JSON.stringify(item.intent_url)}, { wait: true, timeout: 60 })
+	await wait(${(randInt(delayMin, delayMax) / 1000).toFixed(2)})
+	let clicked = false
+	for (const sel of ['[data-testid="tweetButton"]', '[data-testid="tweetButtonInline"]']) {
+		try { await click(sel, { label: 'publier le post' }); clicked = true; break } catch (_) {}
 	}
-	const selectors = ['[data-testid=tweetButton]', '[data-testid=tweetButtonInline]'];
-	const clickTimeout = cfg.click_timeout_ms || 12000;
-	try {
-		await sleep(randInt(cfg.human_delay_ms_min || 1500, cfg.human_delay_ms_max || 4000));
-		let clicked = false;
-		for (const sel of selectors) {
-			const el = await page.$(sel);
-			if (el) { await el.click(); clicked = true; log(`  clic (${sel})`); break; }
-		}
-		if (!clicked) { await page.close().catch(() => {}); return { ok: false, reason: 'bouton tweet introuvable (captcha ou DOM changé)' }; }
-		await page.waitForFunction(
-			() => !document.querySelector('[data-testid=tweetButton]') || location.href.includes('/status/'),
-			{ timeout: clickTimeout }
-		).catch(() => { throw new Error(`confirmation absente après ${clickTimeout}ms`); });
-		await sleep(2000);
-		await page.close().catch(() => {});
-		return { ok: true };
-	} catch (e) {
-		await page.close().catch(() => {});
-		return { ok: false, reason: e.message };
-	}
+	if (!clicked) throw new Error('bouton tweet introuvable (captcha ou DOM changé)')
+	const check = () => js(String.raw\`(() => !document.querySelector('[data-testid="tweetButton"]') || location.href.includes('/status/'))()\`)
+	const deadline = Date.now() + ${cfg.click_timeout_ms || 12000}
+	let ok = await check()
+	while (!ok && Date.now() < deadline) { await wait(0.5); ok = await check() }
+	if (!ok) throw new Error('confirmation absente')
+	await wait(2)
+	await completeTaskSpace(task.id, { keep: false })
+	cliLog('RESULT ' + JSON.stringify({ ok: true }))
+} catch (e) {
+	cliLog('RESULT ' + JSON.stringify({ ok: false, error: String(e && e.message || e) }))
+}
+`, 120000);
+	if (r.ok) return { ok: true };
+	return { ok: false, reason: r.error || 'échec ego-browser' };
 }
 
 (async () => {
 	const cfg = loadConfig();
-	for (const k of ['wp_url', 'runner_token', 'browser_url']) {
+	for (const k of ['wp_url', 'runner_token']) {
 		if (!cfg[k]) { log(`ERREUR: champ "${k}" manquant dans ${CONFIG_PATH}`); process.exit(2); }
 	}
 
 	const betweenMs = parseInt(process.env.PK_PAUSE_MS || '20000', 10);
 
-	await ensureCanary(cfg);
-	let browser;
-	try { browser = await connectBrowser(cfg); }
-	catch (e) { log(`ERREUR CDP: ${e.message}`); process.exit(3); }
-
-	if (!(await checkXSession(browser))) { await browser.disconnect().catch(() => {}); process.exit(4); }
+	if (!(await checkXSession(cfg))) process.exit(4);
 
 	log('=== CATCH-UP X — énumération via /next (texte traduit) ===');
 	const items = await enumerateViaNext(cfg);
-	if (items.length === 0) { log('Rien à rattraper.'); await browser.disconnect().catch(() => {}); process.exit(0); }
+	if (items.length === 0) { log('Rien à rattraper.'); process.exit(0); }
 
-	log(`=== ${items.length} article(s) à publier — pause ${betweenMs}ms entre chaque ===`);
+	log(`=== ${items.length} article(s) à publier — pause ${betweenMs}ms entre chaque (moteur ego-browser) ===`);
 	const done = [];
 	const failed = [];
 	let consecFail = 0;
 
 	for (const item of items) {
 		log(`>> #${item.post_id} « ${String(item.title).slice(0, 50)} »`);
-		const res = await postOne(browser, item, cfg);
+		const res = await postOne(cfg, item);
 		if (res.ok) {
 			done.push(item.post_id);
 			log(`  #${item.post_id} PUBLIÉ (${done.length}/${items.length})`);
@@ -189,6 +169,5 @@ async function postOne(browser, item, cfg) {
 
 	log(`=== BILAN: ${done.length} publié(s), ${failed.length} échec(s) ===`);
 	for (const f of failed) log(`  ÉCHEC #${f.id}: ${f.reason}`);
-	await browser.disconnect().catch(() => {});
 	process.exit(failed.length ? 1 : 0);
 })();

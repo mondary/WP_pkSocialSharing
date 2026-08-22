@@ -4,7 +4,6 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 X_PLIST="$HOME/Library/LaunchAgents/com.pk.x-runner.plist"
 MEDIUM_PLIST="$HOME/Library/LaunchAgents/com.pk.medium-runner.plist"
-CHROME_PLIST="$HOME/Library/LaunchAgents/com.pk.chrome-canary-cdp.plist"
 KILL_SWITCH="$HOME/.config/pk-runners.disabled"
 USER_ID=$(id -u)
 
@@ -23,10 +22,8 @@ case "${1:-status}" in
         touch "$KILL_SWITCH"
         launchctl bootout gui/$UID/com.pk.x-runner 2>/dev/null || true
         launchctl bootout gui/$UID/com.pk.medium-runner 2>/dev/null || true
-        launchctl bootout gui/$UID/com.pk.chrome-canary-cdp 2>/dev/null || true
-        pkill -9 -f "Google Chrome Canary" 2>/dev/null || true
         sleep 1
-        echo "Runners et Chrome Canary arrêtés. Kill switch actif."
+        echo "Runners arrêtés. Kill switch actif."
         ;;
     restart)
         $0 stop
@@ -56,7 +53,7 @@ case "${1:-status}" in
             echo "Kill switch : inactif"
         fi
         echo "Statut launchd :"
-        launchctl list | grep -E "com.pk\.(x-runner|medium-runner|chrome-canary-cdp)" || echo "Aucun runner chargé."
+        launchctl list | grep -E "com.pk\.(x-runner|medium-runner)" || echo "Aucun runner chargé."
         echo ""
         echo "Processus actifs :"
         ps aux | grep -E "pk-(x-runner|medium-runner)" | grep -v grep || echo "Aucun processus."

@@ -18,9 +18,9 @@
 - Fallback WP-CLI pour relancer les publications sans dépendre de WP-Cron.
 - Configuration Meta centralisée : connexion OAuth, token longue durée, détection Page Facebook et compte Instagram.
 - Publication X via API, ou fallback navigateur si les crédits API sont insuffisants.
-- Runner navigateur X (CDP) : queue REST + token + plafond quotidien, automatisable via un cron `launchd`/`systemd` sur ta machine (zéro crédit API, fingerprint humain). Utilise **Chrome Canary** comme navigateur dédié pour publier en arrière-plan sans perturber ton Chrome principal. Voir [`src/tools/runner/`](src/tools/runner/README.md).
-- Runner navigateur Medium (CDP) : importe l'URL de l'article via `medium.com/p/import`, sans dépendre de l'API Medium retirée. Mode daemon qui poll la queue toutes les 30 secondes — un clic sur **Publier maintenant** dans WordPress déclenche l'import et la publication Medium sans rien relancer. Réutilise le Chrome dédié et la queue REST du plugin. Voir [`src/tools/runner/`](src/tools/runner/README.md).
-- Contrôleur macOS dans la menubar : clic gauche 🟢/🔴 pour activer ou arrêter tous les runners, clic droit pour les logs. Chrome Canary ne s'ouvre qu'en présence d'un article à publier.
+- Runner navigateur X : queue REST + token + plafond quotidien, automatisable via un cron `launchd` sur ta machine (zéro crédit API, fingerprint humain). Publie via **ego-browser (EgoLite)** dans un espace de navigation isolé qui hérite de ta session X, sans perturber ton navigateur principal. Voir [`src/tools/runner/`](src/tools/runner/README.md).
+- Runner navigateur Medium : importe l'URL de l'article via `medium.com/p/import`, sans dépendre de l'API Medium retirée. Mode daemon qui poll la queue toutes les 30 secondes — un clic sur **Publier maintenant** dans WordPress déclenche l'import et la publication Medium sans rien relancer. Réutilise ego-browser et la queue REST du plugin. Voir [`src/tools/runner/`](src/tools/runner/README.md).
+- Contrôleur macOS dans la menubar : clic gauche 🟢/🔴 pour activer ou arrêter tous les runners, clic droit pour les logs.
 
 ## 🧠 Utilisation
 
@@ -37,7 +37,7 @@ Le partage automatique se déclenche au moment où l’article passe en statut `
 - `Dashboard` : vue synthétique des articles planifiés/publiés et de l’état par réseau.
 - `Jour` : suivi des publications du jour.
 - `LinkedIn` : OAuth LinkedIn, Author URN profil ou organisation, visibilité, format du message.
-- `X (Twitter)` : clés API, mode automatique si les crédits API sont disponibles, mode manuel via navigateur sinon, ou runner CDP externe (token + plafond quotidien) pour une automatisation sans crédit.
+- `X (Twitter)` : clés API, mode automatique si les crédits API sont disponibles, mode manuel via navigateur sinon, ou runner navigateur externe (token + plafond quotidien) pour une automatisation sans crédit.
 - `Facebook` : Page ID, Page Access Token, publication sur Page avec image mise en avant si disponible.
 - `Instagram` : IG User ID, Access Token, publication via Instagram Graph API.
 - `Threads` : Threads User ID, Access Token, publication via API Threads.
@@ -156,6 +156,6 @@ Mise à jour live :
 ## 🔗 Liens
 
 - EN README : [README_en.md](README_en.md)
-- Runner navigateur X (CDP) : [src/tools/runner/README.md](src/tools/runner/README.md)
+- Runner navigateur X/Medium (ego-browser) : [src/tools/runner/README.md](src/tools/runner/README.md)
 - Helper Apple FoundationModels (traduction) : [src/tools/translator/apple-translator/README.md](src/tools/translator/apple-translator/README.md)
 - Plugin source : [src/pk-linkedin-autopublish](src/pk-linkedin-autopublish)

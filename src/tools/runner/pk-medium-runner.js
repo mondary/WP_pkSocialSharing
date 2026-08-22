@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-const puppeteer = require('puppeteer-core');
+// Runner Medium (daemon) — importe et publie via ego-browser (EgoLite) :
+// espace de navigation isolé qui hérite de la session Medium de l'utilisateur.
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { runEgo } = require('./ego-engine');
 
 const CONFIG_PATH = process.env.PK_MEDIUM_RUNNER_CONF || path.join(process.env.HOME || '/root', '.config', 'pk-medium-runner.json');
 const LOG_PATH = process.env.PK_MEDIUM_RUNNER_LOG || path.join(process.env.HOME || '/root', '.local', 'log', 'pk-medium-runner.log');
@@ -10,6 +11,7 @@ const KILL_SWITCH = path.join(process.env.HOME || '/root', '.config', 'pk-runner
 const NAMESPACE = 'pksocialsharing/v1';
 const POLL_INTERVAL_MS = 30000;
 const ERROR_BACKOFF_MS = 60000;
+const TASK_SPACE = 'pk-medium-runner';
 
 function log(message) {
 	const line = `[${new Date().toISOString()}] ${message}`;
@@ -41,138 +43,141 @@ async function wpCall(config, method, route, body) {
 	return { ok: response.ok, status: response.status, data };
 }
 
-async function connectBrowser(config) {
-	const base = config.browser_url.replace(/\/$/, '');
-	try {
-		const response = await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(5000) });
-		const info = await response.json();
-		return puppeteer.connect({ browserWSEndpoint: info.webSocketDebuggerUrl, defaultViewport: null });
-	} catch (_) {
-		const script = path.join(__dirname, process.platform === 'darwin' ? 'start-chrome-macos.sh' : 'start-chromium-linux.sh');
-		if (!fs.existsSync(script)) throw new Error(`Navigateur CDP indisponible et script absent: ${script}`);
-		spawn(script, [], { detached: true, stdio: 'ignore', env: process.env }).unref();
-		for (let attempt = 0; attempt < 30; attempt++) {
-			await sleep(1000);
-			try {
-				const response = await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(2000) });
-				const info = await response.json();
-				return puppeteer.connect({ browserWSEndpoint: info.webSocketDebuggerUrl, defaultViewport: null });
-			} catch (_) {}
-		}
-		throw new Error('Chrome CDP inaccessible');
-	}
-}
-
 async function release(config, postId) {
 	await wpCall(config, 'POST', 'medium-browser/release', { post_id: postId }).catch(() => {});
 }
 
-async function processNext(config, browser, next) {
-	const postId = next.post_id;
-	let page;
-	try {
-		log(`POST #${postId} « ${next.title} » — ${next.link}`);
-		page = await browser.newPage();
-		await page.goto(next.import_url, { waitUntil: 'networkidle2', timeout: 30000 });
-		await sleep(2000);
+// Script ego-browser : colle l'URL dans medium.com/p/import, clique Importer,
+// puis Publish si autopublish. Retourne { ok, manual?, medium_post_url?, error? }.
+function mediumScript(next, opts) {
+	return `
+const task = await useOrCreateTaskSpace('${TASK_SPACE}')
+try {
+	await openOrReuseTab(${JSON.stringify(next.import_url)}, { wait: true, timeout: 60 })
+	await wait(2)
+	const tb = 'div[role="textbox"]'
+	await waitForElement(tb, { timeout: 15 })
+	await click(tb, { label: 'champ import medium' })
+	const typed = await js(String.raw\`(() => {
+		document.execCommand('selectAll')
+		document.execCommand('insertText', false, ${JSON.stringify(next.link)})
+		const el = document.querySelector('div[role="textbox"]')
+		return !!(el && (el.textContent || '').includes(${JSON.stringify(next.link)}))
+	})()\`)
+	if (!typed) throw new Error('URL non insérée dans le champ Medium')
 
-		const textboxSelector = 'div[role="textbox"]';
-		await page.waitForSelector(textboxSelector, { timeout: 15000 });
-		await page.click(textboxSelector);
-		await sleep(200);
-		await page.evaluate(() => { document.execCommand('selectAll', false, null); });
-		await page.keyboard.press('Backspace');
-		await page.keyboard.type(next.link, { delay: 5 });
-		await sleep(500);
-
-		const typed = await page.evaluate((selector, expected) => {
-			const el = document.querySelector(selector);
-			return el && (el.textContent || '').includes(expected);
-		}, textboxSelector, next.link);
-		if (!typed) throw new Error('URL non insérée dans le champ Medium');
-
-		const autoclick = config.autoclick_override === null ? !!next.autoclick : !!config.autoclick_override;
-		if (!autoclick) {
-			log(`POST #${postId}: URL collée, validation manuelle requise.`);
-			await release(config, postId);
-			return true;
-		}
-
-		await sleep(config.human_delay_ms || 1500);
-		const clicked = await page.evaluate(() => {
+	if (!${opts.autoclick}) {
+		await completeTaskSpace(task.id, { keep: true })
+		cliLog('RESULT ' + JSON.stringify({ ok: true, manual: true }))
+	} else {
+		await wait(${(opts.humanDelayMs / 1000).toFixed(2)})
+		const clicked = await js(String.raw\`(() => {
 			const button = [...document.querySelectorAll('button, [role="button"]')].find((element) => {
-				const text = (element.textContent || '').trim();
-				return /^import$/i.test(text) || /^importer$/i.test(text);
-			});
-			if (!button) return false;
-			button.click();
-			return true;
-		});
-		if (!clicked) throw new Error('bouton Importer introuvable; Medium a probablement changé son interface');
+				const text = (element.textContent || '').trim()
+				return /^import$/i.test(text) || /^importer$/i.test(text)
+			})
+			if (!button) return false
+			button.click()
+			return true
+		})()\`)
+		if (!clicked) throw new Error('bouton Importer introuvable; Medium a probablement changé son interface')
 
-		const importTimeout = config.click_timeout_ms || 30000;
-		await page.waitForFunction(
-			(importUrl) => !window.location.href.startsWith(importUrl),
-			{ timeout: importTimeout },
-			next.import_url
-		).catch(() => { throw new Error(`redirection après import absente après ${importTimeout}ms`); });
+		const importUrl = ${JSON.stringify(next.import_url)}
+		const deadline = Date.now() + ${opts.importTimeoutMs}
+		let info = await pageInfo()
+		while (info.url && info.url.startsWith(importUrl) && Date.now() < deadline) {
+			await wait(1)
+			info = await pageInfo()
+		}
+		if (info.url && info.url.startsWith(importUrl)) throw new Error('redirection après import absente')
+		await wait(3)
+		const editorUrl = info.url
 
-		await sleep(3000);
-		const editorUrl = page.url();
-		log(`POST #${postId}: import OK, éditeur ouvert — ${editorUrl}`);
-
-		const autopublish = config.autopublish === undefined ? true : !!config.autopublish;
-		let mediumPostUrl = '';
-		if (autopublish) {
-			await sleep(2000);
-			const publishClicked = await page.evaluate(() => {
+		let mediumPostUrl = ''
+		if (${opts.autopublish}) {
+			await wait(2)
+			const publishClicked = await js(String.raw\`(() => {
 				const btn = [...document.querySelectorAll('button, [role="button"]')].find((el) => {
-					const t = (el.textContent || '').trim();
-					return /^publish$/i.test(t) || /^publier$/i.test(t);
-				});
-				if (!btn) return false;
-				btn.click();
-				return true;
-			});
+					const t = (el.textContent || '').trim()
+					return /^publish$/i.test(t) || /^publier$/i.test(t)
+				})
+				if (!btn) return false
+				btn.click()
+				return true
+			})()\`)
 			if (!publishClicked) {
-				log(`POST #${postId}: bouton Publish introuvable — brouillon laissé sur Medium.`);
+				// brouillon laissé sur Medium
 			} else {
-				await sleep(5000);
-				const confirmed = await page.evaluate(() => {
-					const buttons = [...document.querySelectorAll('button, [role="button"]')].filter((el) => {
-						const t = (el.textContent || '').trim();
-						if (!/^publish$/i.test(t) && !/^publish now$/i.test(t) && !/^publier$/i.test(t)) return false;
-						const rect = el.getBoundingClientRect();
-						if (rect.width < 150) return false;
-						const style = window.getComputedStyle(el);
-						if (style.display === 'none' || style.visibility === 'hidden') return false;
-						return true;
-					});
-					if (buttons.length === 0) return false;
-					buttons[buttons.length - 1].click();
-					return true;
-				});
+				await wait(5)
+				const confirmed = await js(String.raw\`(() => {
+					const buttons = [...document.querySelectorAll('button, [role="button"]')]
+					const wide = buttons.filter((el) => {
+						const t = (el.textContent || '').trim()
+						if (!/^publish$/i.test(t) && !/^publish now$/i.test(t) && !/^publier$/i.test(t)) return false
+						const rect = el.getBoundingClientRect()
+						if (rect.width < 150) return false
+						const style = window.getComputedStyle(el)
+						if (style.display === 'none' || style.visibility === 'hidden') return false
+						return true
+					})
+					if (wide.length === 0) return false
+					wide[wide.length - 1].click()
+					return true
+				})()\`)
 				if (!confirmed) {
-					log(`POST #${postId}: confirmation Publish absente — brouillon laissé sur Medium.`);
+					// brouillon laissé sur Medium
 				} else {
-					await page.waitForFunction(
-						() => !/\/(edit|p\/edit|new)\b/i.test(window.location.href),
-						{ timeout: 30000 }
-					).catch(() => {});
-					await sleep(2000);
-					mediumPostUrl = page.url();
-					log(`POST #${postId}: publié — ${mediumPostUrl}`);
+					const deadline2 = Date.now() + 30000
+					let info2 = await pageInfo()
+					while (info2.url && /\\/(edit|p\\/edit|new)\\b/i.test(info2.url) && Date.now() < deadline2) {
+						await wait(1)
+						info2 = await pageInfo()
+					}
+					await wait(2)
+					mediumPostUrl = info2.url || ''
 				}
 			}
 		}
-
-		const done = await wpCall(config, 'POST', 'medium-browser/done', { post_id: postId, medium_post_url: mediumPostUrl });
-		if (!done.ok) throw new Error(`/done HTTP ${done.status}`);
-		log(`POST #${postId}: import Medium marqué comme traité${mediumPostUrl ? ' et publié' : ' (brouillon)'}.`);
-		return true;
-	} finally {
-		if (page) await page.close().catch(() => {});
+		await completeTaskSpace(task.id, { keep: false })
+		cliLog('RESULT ' + JSON.stringify({ ok: true, medium_post_url: mediumPostUrl, editor_url: editorUrl }))
 	}
+} catch (e) {
+	cliLog('RESULT ' + JSON.stringify({ ok: false, error: String(e && e.message || e) }))
+}
+`;
+}
+
+async function processNext(config, next) {
+	const postId = next.post_id;
+	log(`POST #${postId} « ${next.title} » — ${next.link} (moteur ego-browser)`);
+
+	const autoclick = config.autoclick_override === null ? !!next.autoclick : !!config.autoclick_override;
+	const result = await runEgo(config, mediumScript(next, {
+		autoclick,
+		humanDelayMs: config.human_delay_ms || 1500,
+		importTimeoutMs: config.click_timeout_ms || 30000,
+		autopublish: config.autopublish === undefined ? true : !!config.autopublish,
+	}), 240000);
+
+	if (!result.ok) {
+		log(`POST #${postId} ECHEC: ${result.error} — claim libéré.`);
+		await release(config, postId);
+		return true;
+	}
+	if (result.manual) {
+		log(`POST #${postId}: URL collée dans EgoLite, validation manuelle requise.`);
+		await release(config, postId);
+		return true;
+	}
+
+	log(`POST #${postId}: import OK, éditeur ouvert — ${result.editor_url || '?'}`);
+	const done = await wpCall(config, 'POST', 'medium-browser/done', { post_id: postId, medium_post_url: result.medium_post_url || '' });
+	if (!done.ok) {
+		log(`POST #${postId} ERREUR /done HTTP ${done.status} — importé mais non marqué, vérifie WP.`);
+		return false;
+	}
+	log(`POST #${postId}: import Medium marqué comme traité${result.medium_post_url ? ' et publié' : ' (brouillon)'}.`);
+	return true;
 }
 
 async function daemon() {
@@ -186,7 +191,7 @@ async function daemon() {
 	process.on('SIGTERM', () => stop('SIGTERM'));
 
 	const config = loadConfig();
-	for (const key of ['wp_url', 'runner_token', 'browser_url']) {
+	for (const key of ['wp_url', 'runner_token']) {
 		if (!config[key]) throw new Error(`Champ "${key}" manquant dans ${CONFIG_PATH}`);
 	}
 
@@ -195,9 +200,7 @@ async function daemon() {
 		return;
 	}
 
-	log(`Démarrage daemon (poll ${POLL_INTERVAL_MS / 1000}s, wp=${config.wp_url})`);
-	let browser = null;
-
+	log(`Démarrage daemon (poll ${POLL_INTERVAL_MS / 1000}s, wp=${config.wp_url}, moteur ego-browser)`);
 	while (!stopping) {
 		if (fs.existsSync(KILL_SWITCH)) {
 			log(`KILL SWITCH actif (${KILL_SWITCH}) — arrêt daemon.`);
@@ -211,21 +214,16 @@ async function daemon() {
 				await sleep(POLL_INTERVAL_MS);
 				continue;
 			}
-			if (!browser) browser = await connectBrowser(config);
-			await processNext(config, browser, response.data);
+			await processNext(config, response.data);
 			// dès qu'un post est traité, on reboucle tout de suite au cas où la queue contient plusieurs posts
 			continue;
 		} catch (error) {
 			log(`ERREUR boucle: ${error.message}`);
-			// Reconnecter le navigateur si la connexion CDP a sauté
-			if (browser) await browser.disconnect().catch(() => {});
-			browser = null;
 			log(`Retry dans ${ERROR_BACKOFF_MS / 1000}s.`);
 			await sleep(ERROR_BACKOFF_MS);
 		}
 	}
 
-	if (browser) await browser.disconnect().catch(() => {});
 	log('Daemon arrêté.');
 }
 

@@ -1,7 +1,7 @@
 {
   "wp_url": "https://exemple.com",
   "runner_token": "colle-ici-ton-token-runner-medium",
-  "browser_url": "http://127.0.0.1:9222",
+  "ego_bin": null,
   "autoclick_override": null,
   "human_delay_ms": 1500,
   "click_timeout_ms": 15000

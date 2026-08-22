@@ -55,7 +55,7 @@ class PKRunnerController(NSObject):
         menu.addItem_(self.make_menu_item("VOIR LES LOGS MEDIUM", "openMediumLog:"))
         menu.addItem_(NSMenuItem.separatorItem())
         menu.addItem_(self.make_menu_item("START RUNNERS", "startRunners:"))
-        menu.addItem_(self.make_menu_item("STOP TOUT (Canary inclus)", "stopAll:"))
+        menu.addItem_(self.make_menu_item("STOP TOUT", "stopAll:"))
         menu.addItem_(NSMenuItem.separatorItem())
         menu.addItem_(self.make_menu_item("Quitter le controleur", "quit:"))
         return menu

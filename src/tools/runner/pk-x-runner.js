@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-const puppeteer = require('puppeteer-core');
+// Runner X — publie via ego-browser (EgoLite) : espace de navigation isolé qui
+// hérite de la session X de l'utilisateur, sans voler son navigateur ni son focus.
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { runEgo } = require('./ego-engine');
 
 process.on('uncaughtException', e => { log(`UNCAUGHT: ${e.message}`); process.exit(9); });
 process.on('unhandledRejection', r => { log(`UNHANDLED REJECTION: ${r}`); process.exit(9); });
@@ -11,6 +12,7 @@ const CONFIG_PATH = process.env.PK_RUNNER_CONF || path.join(process.env.HOME || 
 const LOG_PATH = process.env.PK_RUNNER_LOG || path.join(process.env.HOME || '/root', '.local', 'log', 'pk-x-runner.log');
 const KILL_SWITCH = path.join(process.env.HOME || '/root', '.config', 'pk-runners.disabled');
 const NAMESPACE = 'pksocialsharing/v1';
+const TASK_SPACE = 'pk-x-runner';
 
 function loadConfig() {
 	if (!fs.existsSync(CONFIG_PATH)) {
@@ -30,14 +32,6 @@ function log(msg) {
 	const line = `[${new Date().toISOString()}] ${msg}`;
 	fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
 	fs.appendFileSync(LOG_PATH, line + '\n');
-}
-
-function sleep(ms) {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function randInt(minMs, maxMs) {
-	return Math.floor(minMs + Math.random() * (maxMs - minMs));
 }
 
 async function wpCall(cfg, method, route, body) {
@@ -61,48 +55,49 @@ async function wpCall(cfg, method, route, body) {
 	return { ok: res.ok, status: res.status, data };
 }
 
-async function ensureCanary(cfg) {
-	const base = cfg.browser_url.replace(/\/$/, '');
-	try { await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(3000) }); return; } catch (_) {}
-	const startScript = process.platform === 'darwin' ? 'start-chrome-macos.sh' : 'start-chromium-linux.sh';
-	log(`Navigateur down — démarrage via ${startScript}...`);
-	const script = path.join(__dirname, startScript);
-	if (!fs.existsSync(script)) { log(`ERREUR: ${script} introuvable`); process.exit(3); }
-	spawn(script, [], { detached: true, stdio: 'ignore', env: { ...process.env } }).unref();
-	for (let i = 0; i < 30; i++) {
-		await sleep(1000);
-		try { await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(2000) }); log('Navigateur démarré.'); return; }
-		catch (_) {}
+function egoScript(intentUrl, autoclick, opts) {
+	return `
+const task = await useOrCreateTaskSpace('${TASK_SPACE}')
+try {
+	await openOrReuseTab(${JSON.stringify(intentUrl)}, { wait: true, timeout: 60 })
+	await wait(${opts.humanDelaySec.toFixed(2)})
+	if (!${autoclick}) {
+		await completeTaskSpace(task.id, { keep: true })
+		cliLog('RESULT ' + JSON.stringify({ ok: true, manual: true }))
+	} else {
+		let clicked = false
+		for (const sel of ['[data-testid="tweetButton"]', '[data-testid="tweetButtonInline"]']) {
+			try { await click(sel, { label: 'publier le post' }); clicked = true; break } catch (_) {}
+		}
+		if (!clicked) throw new Error('bouton tweet introuvable')
+		const confirm = () => js(String.raw\`(() => {
+			const msgs = [...document.querySelectorAll('[role="alert"], [data-testid="toast"]')]
+				.map(e => (e.innerText || e.textContent || ''))
+			return msgs.some(t => /(?:post|tweet|publication).{0,40}(?:sent|envoy|publi)|(?:sent|envoy|publi).{0,40}(?:post|tweet|publication)/i.test(t))
+		})()\`)
+		const deadline = Date.now() + ${opts.clickTimeoutMs}
+		let confirmed = await confirm()
+		while (!confirmed && Date.now() < deadline) { await wait(0.5); confirmed = await confirm() }
+		if (!confirmed) throw new Error('confirmation explicite X absente')
+		await wait(2)
+		await completeTaskSpace(task.id, { keep: false })
+		cliLog('RESULT ' + JSON.stringify({ ok: true }))
 	}
-	log(`ERREUR: le navigateur n'a pas démarré sur le port CDP. Lance-le: ./${startScript}`);
-	process.exit(3);
+} catch (e) {
+	cliLog('RESULT ' + JSON.stringify({ ok: false, error: String(e && e.message || e) }))
+}
+`;
 }
 
-async function connectBrowser(cfg) {
-	const base = cfg.browser_url.replace(/\/$/, '');
-	let wsEndpoint;
-	try {
-		const ver = await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(5000) });
-		const info = await ver.json();
-		wsEndpoint = info.webSocketDebuggerUrl;
-	} catch (e) {
-		throw new Error(`Chrome CDP inaccessible sur ${base} — lance-le d'abord (voir start-chrome-*.sh). Détail: ${e.message}`);
-	}
-	if (!wsEndpoint) throw new Error('webSocketDebuggerUrl absent de /json/version');
-	return puppeteer.connect({ browserWSEndpoint: wsEndpoint, defaultViewport: null });
-}
-
-async function releaseAndExit(cfg, browser, page, postId, reason, code) {
-	log(`POST #${postId} ${reason}`);
+async function releaseAndExit(cfg, postId, reason, code) {
+	log(reason);
 	if (postId) await wpCall(cfg, 'POST', 'x-browser/release', { post_id: postId }).catch(() => {});
-	if (page) await page.close().catch(() => {});
-	if (browser) await browser.disconnect().catch(() => {});
 	process.exit(code);
 }
 
 (async () => {
 	const cfg = loadConfig();
-	for (const k of ['wp_url', 'runner_token', 'browser_url']) {
+	for (const k of ['wp_url', 'runner_token']) {
 		if (!cfg[k]) { log(`ERREUR: champ "${k}" manquant dans ${CONFIG_PATH}`); process.exit(2); }
 	}
 
@@ -134,64 +129,23 @@ async function releaseAndExit(cfg, browser, page, postId, reason, code) {
 		process.exit(0);
 	}
 
-	let browser;
-	try {
-		await ensureCanary(cfg);
-		browser = await connectBrowser(cfg);
-	} catch (e) {
-		log(`ERREUR CDP: ${e.message}`);
-		process.exit(3);
-	}
-
 	const postId = next.post_id;
-	log(`POST #${postId} « ${next.title} » autoclick=${next.autoclick}`);
+	log(`POST #${postId} « ${next.title} » autoclick=${next.autoclick} (moteur ego-browser)`);
 
 	const autoclick = cfg.autoclick_override === null ? !!next.autoclick : !!cfg.autoclick_override;
-	if (!autoclick) {
-		let page;
-		try { page = await browser.newPage(); await page.goto(next.intent_url, { waitUntil: 'domcontentloaded', timeout: 30000 }); } catch (e) { /* tab opening best-effort */ }
-		await releaseAndExit(cfg, browser, page, postId, `POST #${postId} autoclick off — onglet ouvert, claim libéré (clic manuel).`, 0);
-		return;
-	}
-
-	let page;
-	try {
-		page = await browser.newPage();
-		await page.goto(next.intent_url, { waitUntil: 'networkidle2', timeout: 30000 });
-	} catch (e) {
-		await releaseAndExit(cfg, browser, page, postId, `POST #${postId} ERREUR navigation: ${e.message}`, 1);
-		return;
-	}
-
-	const selectors = ['[data-testid=tweetButton]', '[data-testid=tweetButtonInline]'];
 	const delayMin = cfg.human_delay_ms_min || 1500;
 	const delayMax = cfg.human_delay_ms_max || 4000;
+	const result = await runEgo(cfg, egoScript(next.intent_url, autoclick, {
+		humanDelaySec: (delayMin + Math.random() * (delayMax - delayMin)) / 1000,
+		clickTimeoutMs: cfg.click_timeout_ms || 12000,
+	}));
 
-	try {
-		await sleep(randInt(delayMin, delayMax));
-		let clicked = false;
-		for (const sel of selectors) {
-			const el = await page.$(sel);
-			if (el) {
-				await el.click();
-				clicked = true;
-				log(`POST #${postId} clic (${sel})`);
-				break;
-			}
-		}
-		if (!clicked) throw new Error('bouton tweet introuvable');
-
-		const clickTimeout = cfg.click_timeout_ms || 12000;
-		await page.waitForFunction(() => {
-			const messages = [...document.querySelectorAll('[role="alert"], [data-testid="toast"]')]
-				.map((element) => (element.innerText || element.textContent || '').toLowerCase());
-			return messages.some((message) => /(?:post|tweet|publication).{0,40}(?:sent|envoy|publi)|(?:sent|envoy|publi).{0,40}(?:post|tweet|publication)/.test(message));
-		}, { timeout: clickTimeout }).catch(() => {
-			throw new Error(`confirmation explicite X absente apres ${clickTimeout}ms`);
-		});
-		await sleep(2000);
-	} catch (e) {
-		await releaseAndExit(cfg, browser, page, postId, `POST #${postId} ECHEC: ${e.message} — claim libéré.`, 1);
+	if (!result.ok) {
+		await releaseAndExit(cfg, postId, `POST #${postId} ECHEC: ${result.error} — claim libéré.`, 1);
+		return;
+	}
+	if (result.manual) {
+		await releaseAndExit(cfg, postId, `POST #${postId} autoclick off — onglet ouvert dans EgoLite, claim libéré (clic manuel).`, 0);
 		return;
 	}
 
@@ -200,13 +154,9 @@ async function releaseAndExit(cfg, browser, page, postId, reason, code) {
 		done = await wpCall(cfg, 'POST', 'x-browser/done', { post_id: postId });
 	} catch (e) {
 		log(`POST #${postId} ERREUR /done: ${e.message} — posté mais non marqué, vérifie WP.`);
-		await page.close().catch(() => {});
-		await browser.disconnect();
 		process.exit(1);
 	}
 
 	log(`POST #${postId} ${done.ok ? 'marque publié' : `ERREUR /done HTTP ${done.status}`}.`);
-	await page.close().catch(() => {});
-	await browser.disconnect();
 	process.exit(done.ok ? 0 : 1);
 })();

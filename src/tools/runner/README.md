@@ -1,32 +1,26 @@
-# PK X Runner (CDP)
+# PK X Runner (ego-browser)
 
-Publie sur X **sans crédits API** en pilotant **ton vrai Chrome Canary** via le Chrome
-DevTools Protocol (CDP). Le navigateur est le tien → fingerprint humain → pas de
-ban. Même code sur macOS et Linux.
+Publie sur X **sans crédits API** en pilotant **ego-browser (EgoLite)** — le navigateur
+conçu pour les agents. Le runner publie dans un **espace de navigation isolé** qui
+hérite de la session X de ton navigateur principal : pas de fenêtre qui squatte ton
+écran, pas de vol de focus, pas de navigateur dédié à maintenir.
 
 ```
-WP plugin  ──GET /next──►  ce runner  ──CDP:9222──►  Chrome Canary (session X)
+WP plugin  ──GET /next──►  ce runner  ──ego-browser──►  EgoLite (session X héritée)
             ◄──POST /done──            ◄──clic tweet──
 ```
 
-## Pourquoi Chrome Canary (et pas Chrome stable)
+## Pourquoi ego-browser (EgoLite)
 
-**Canary est le navigateur dédié aux automatisations.** Binaire, profil et icône
-séparés de ton Chrome stable — tu peux donc **bosser normalement sur ton Chrome
-principal** pendant que le runner publie dans Canary : pas de vol de focus, pas de
-capture de curseur (la fenêtre Canary est poussée hors-champ).
+**EgoLite est un vrai Chromium avec ta session.** Les espaces de tâches (task spaces)
+sont des contextes de navigation isolés : l'agent a ses propres onglets et sa souris
+virtuelle, mais **hérite de tes logins** — X voit ton vrai profil, pas un Chromium
+automatisé. Ton navigateur principal n'est jamais perturbé.
 
-En bonus, Chrome stable interdit le pilotage CDP sur son profil par défaut, alors que
-Canary a son propre profil par défaut → CDP autorisé nativement.
-
-À installer une fois : `brew install --cask google-chrome@canary`.
-
-## Pourquoi CDP et pas Playwright/Puppeteer classique
+## Pourquoi pas Playwright/Puppeteer classique
 
 - `puppeteer.launch()` démarre un Chromium automatisé → `navigator.webdriver`, fingerprint de build → **X détecte et bannit**.
-- `puppeteer-core.connect()` se **branche** sur ton Chrome Canary déjà ouvert via CDP → **indistinguable d'un humain**.
-
-On utilise `puppeteer-core` (pas `puppeteer`) : aucun Chromium téléchargé, il exige un navigateur lancé séparément.
+- ego-browser pilote un vrai Chromium avec ta session utilisateur → **indistinguable d'un humain**.
 
 ## Anti-doublon / anti-spam (géré côté plugin)
 
@@ -43,14 +37,14 @@ Donc zéro risque de double-post ou de rafale, même si le cron se déclenche de
 
 ## Setup macOS
 
-### 1. Installer Node.js + Chrome Canary + dépendances
+### 1. Installer Node.js + ego-browser
 
 ```bash
 brew install node
-brew install --cask google-chrome@canary   # navigateur dédié à l'automatisation
-cd src/tools/runner
-npm install
 ```
+
+ego-browser (EgoLite) doit être installé : commande `ego-browser` disponible dans le `PATH`
+(voir https://ego-browser). Aucune dépendance npm — plus de `npm install` nécessaire.
 
 ### 2. Récupérer le token runner
 
@@ -66,28 +60,14 @@ cp src/tools/runner/config.example.json ~/.config/pk-x-runner.json
 $EDITOR ~/.config/pk-x-runner.json
 #   wp_url        = https://ton-site.com
 #   runner_token  = <le token copié>
-#   browser_url   = http://127.0.0.1:9222
+#   ego_bin       = null (auto: ~/.local/bin/ego-browser, sinon chemin absolu)
 ```
 
-### 4. Lancer Chrome Canary en mode pilotable (1er lancement)
+### 4. Session X
 
-```bash
-chmod +x src/tools/runner/start-chrome-macos.sh
-./src/tools/runner/start-chrome-macos.sh
-```
-
-`start-chrome-macos.sh` lance **Google Chrome Canary** (pas Chrome stable) sur le
-port CDP 9222, avec un profil dédié `~/Library/Application Support/Google/Chrome Canary/PK-Runner`.
-La fenêtre fait **600x900** par défaut (visible en haut à gauche, pour suivre les
-publicutions). Surchargeable : `PK_WINDOW_W`, `PK_WINDOW_H`, `PK_WINDOW_X`, `PK_WINDOW_Y`.
-
-Une fenêtre Canary s'ouvre (profil neuf). **Au premier lancement seulement** :
-connecte-toi à ton compte X (`x.com`) dans cette fenêtre, puis ferme-la. Les relances
-suivantes réutilisent la session (cookies persistés dans le profil Canary dédié).
-
-> Canary est séparé de ton Chrome principal : le runner publie en arrière-plan sans
-> te déranger pendant que tu bosses. Pour le lancer auto au démarrage, voir le plist
-> `com.pk.chrome-canary-cdp.plist` à l'étape 6.
+La session X est **celle de ton navigateur principal**, héritée par les espaces de
+tâches EgoLite. Si X déconnecte, reconnecte-toi dans ton navigateur habituel — rien
+à faire côté runner.
 
 ### 5. Test manuel
 
@@ -96,7 +76,7 @@ node src/tools/runner/pk-x-runner.js
 tail -f ~/.local/log/pk-x-runner.log
 ```
 
-Si un article est en attente X : un nouvel onglet s'ouvre dans le Chrome dédié,
+Si un article est en attente X : EgoLite ouvre un onglet dans son espace de tâches,
 le tweet est publié automatiquement, puis l'onglet se ferme.
 
 ### 6. Automatiser avec launchd (runner à la demande)
@@ -118,8 +98,8 @@ Les fichiers launchd sont pré-configurés dans `~/.local/config/`. Utiliser `sr
 ```
 
 Le runner X se déclenche aux heures de publication (10:05, 11:05, 12:05, 13:05, 14:05 —
-5 déclenchements/jour alignés sur le plafond du plugin). Chrome Canary ne démarre que
-lorsqu'un article est réellement à publier et se connecte au port CDP 9222.
+5 déclenchements/jour alignés sur le plafond du plugin). EgoLite n'est sollicité que
+lorsqu'un article est réellement à publier.
 
 ### 7. Contrôleur menubar macOS
 
@@ -129,14 +109,17 @@ lorsqu'un article est réellement à publier et se connecte au port CDP 9222.
 
 Un point 🟢 (runners actifs) ou 🔴 (kill switch actif) apparaît dans la menubar.
 Un clic gauche bascule directement l'état. Un clic droit ouvre les commandes et les logs.
-`STOP TOUT` crée `~/.config/pk-runners.disabled`, arrête les services et ferme Canary.
+`STOP TOUT` crée `~/.config/pk-runners.disabled` et arrête les services.
 
 > launchd ne déclenche le runner que si ton Mac est allumé. Le plugin garde la
 > queue en mémoire donc rien n'est perdu : le prochain run prend le relais.
 
 ---
 
-## Setup Linux headless (Debian/Ubuntu serveur)
+> ⚠️ **Legacy** : les runners actuels reposent sur ego-browser (macOS). La section
+> Linux ci-dessous décrit l'ancien moteur CDP/Chromium-Xvfb, conservée pour référence.
+
+## Setup Linux headless (Debian/Ubuntu serveur) — LEGACY
 
 > ⚠️ **IP datacenter** : l'IP d'un serveur diffère de ton IP maison → X peut
 > re-valider la session (challenge, pas forcément ban). Préfère un VPS à IP
@@ -226,7 +209,7 @@ Logs : `tail -f /var/log/pk-x-runner.log`
 |---|---|---|
 | `wp_url` | — | URL WordPress (sans slash final) |
 | `runner_token` | — | Token généré dans l'admin WP |
-| `browser_url` | `http://127.0.0.1:9222` | Endpoint CDP de ton Chrome |
+| `ego_bin` | `null` | Chemin absolu d'`ego-browser` (auto-détecté si `null`) |
 | `autoclick_override` | `null` | `true`/`false` pour forcer le clic auto (sinon suit la config WP) |
 | `human_delay_ms_min` | `1500` | Délai aléatoire min avant clic (paraître humain) |
 | `human_delay_ms_max` | `4000` | Délai aléatoire max avant clic |
@@ -245,8 +228,8 @@ Logs : `tail -f /var/log/pk-x-runner.log`
 
 | Symptôme | Cause / fix |
 |---|---|
-| `ERREUR CDP: Chrome CDP inaccessible` | Chrome Canary pas lancé, ou pas sur le port 9222. Lance `start-chrome-macos.sh` (ou charge `com.pk.chrome-canary-cdp.plist`). |
-| `bouton tweet introuvable` | X a changé son DOM, ou tu n'es pas connecté (session X expirée). Rouvre Chrome, reconnecte-toi. |
+| `spawn ego-browser` / ego introuvable | `ego-browser` absent du PATH — installe EgoLite ou renseigne `ego_bin` dans la config. |
+| `bouton tweet introuvable` | X a changé son DOM, ou tu n'es pas connecté (session X expirée). Reconnecte-toi à x.com dans ton navigateur principal. |
 | `confirmation post absente` | Le tweet a peut-être été publié mais le signal n'est pas détecté. Vérifie ton compte X manuellement ; le claim est libéré donc le post ne sera pas retenté (anti-doublon). |
 | `403` sur `/next` | Runner désactivé dans WP, ou `runner_token` erroné. |
 | `daily_cap` | Plafond quotidien atteint — revient demain, ou monte-le dans WP. |
@@ -255,20 +238,19 @@ Logs : `tail -f /var/log/pk-x-runner.log`
 
 - Token vérifié en timing-safe (`hash_equals`) côté WP, 403 si désactivé/erroné.
 - Le runner ne touche qu'aux endpoints `/x-browser/*`, jamais au reste de WP.
-- Le profil Chrome dédié isole ta session X de ton navigateur principal.
-- CDP n'écoute que `127.0.0.1` (jamais exposé à l'extérieur).
+- Les espaces de tâches EgoLite isolent les onglets de l'agent ; ta session X reste dans ton navigateur principal.
 
 ---
 
 ## Runner Medium
 
-`pk-medium-runner.js` réutilise le même Chrome CDP et la session Medium connectée. Il ouvre
+`pk-medium-runner.js` réutilise ego-browser et ta session Medium (héritée de ton navigateur principal). Il ouvre
 `https://medium.com/p/import`, colle l'URL de l'article WordPress puis clique sur **Importer**.
 Il ne requiert pas l'ancienne API Medium.
 
 1. Dans `WP Admin > PK SocialSharing > Medium > Runner navigateur Medium`, active la queue et génère le token.
 2. Copie `src/tools/runner/medium-config.example.json` vers `~/.config/pk-medium-runner.json`, puis renseigne `wp_url` et `runner_token`.
-3. Dans le Chrome dédié, connecte-toi une fois à `medium.com`.
+3. Connecte-toi une fois à `medium.com` dans ton navigateur principal (session héritée par EgoLite).
 4. Lance le runner en daemon (voir ci-dessous).
 
 ### Mode daemon (macOS launchd)
@@ -298,7 +280,7 @@ Logs : `~/.local/log/pk-x-runner.log` et `~/.local/log/pk-medium-runner.log`
 Comportement :
 - claim de 15 minutes par article (évite deux runners sur le même post) ;
 - plafond quotidien configurable côté WordPress ;
-- en cas d'erreur (CDP coupé, réseau), reconnecte automatiquement le navigateur puis réessaie après 60 s ;
+- en cas d'erreur (réseau), réessaie après 60 s ;
 - `autopublish: true` par défaut — clique Importer **puis** Publish dans la modal Medium. Mettre `false` pour ne créer que le brouillon ;
 - décocher « Le runner clique automatiquement sur Importer » dans l'admin pour garder une validation humaine finale.
 

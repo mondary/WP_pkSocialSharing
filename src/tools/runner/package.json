@@ -2,7 +2,7 @@
   "name": "pk-x-runner",
   "version": "1.0.0",
   "private": true,
-  "description": "Runner CDP pour partage X sans credits API (pilote ton Chrome reel).",
+  "description": "Runner ego-browser pour partage X et Medium sans credits API (pilote EgoLite, ton vrai navigateur).",
   "bin": {
     "pk-x-runner": "./pk-x-runner.js",
     "pk-medium-runner": "./pk-medium-runner.js"
@@ -10,9 +10,6 @@
   "scripts": {
     "start": "node pk-x-runner.js",
     "medium": "node pk-medium-runner.js"
-  },
-  "dependencies": {
-    "puppeteer-core": "^23.4.0"
   },
   "engines": {
     "node": ">=18"
