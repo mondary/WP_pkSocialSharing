@@ -112,7 +112,7 @@ try {
 		while (Date.now() < deadline) {
 			let info
 			try { info = await pageInfo() } catch (_) { await wait(1); continue }
-			if (/^https:\/\/medium\.com\/p\/[a-f0-9]+\/edit(?:[?#]|$)/i.test(info.url || '')) {
+			if (/^https:\\/\\/medium\\.com\\/p\\/[a-f0-9]+\\/edit(?:[?#]|$)/i.test(info.url || '')) {
 				editorUrl = info.url
 				break
 			}

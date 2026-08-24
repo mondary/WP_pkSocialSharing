@@ -113,6 +113,7 @@ Mise à jour live :
 
 ## 🧾 Changelog
  
+- `1.3.14` : correction de l'échappement de la regex d'URL dans le script ego-browser généré.
 - `1.3.13` : runner Medium — pré-chauffage du cache de l'article avant import (PowerBoost servait les pages froides trop lentement au crawler Medium), frappe clavier réelle pour la nouvelle UI d'import, backoff après échec ; WP-Cron ne journalise plus de faux succès Medium.
 - `1.3.12` : contrôleur macOS, contrôles de queue Medium équivalents à X.
 - `1.3.11` : runner X, confirmation explicite obligatoire avant marquage publié et réinitialisation du compteur quotidien.
