@@ -112,8 +112,8 @@ Live update:
 
 ## 🧾 Changelog
 
-- `1.3.14`: fixed URL regex escaping in the generated ego-browser script.
-- `1.3.13`: Medium runner — warms the article cache before import (PowerBoost served cold pages too slowly for Medium's crawler), real keyboard typing for the new import UI, backoff after failure; WP-Cron no longer logs fake Medium successes.
+- `2026.08.04`: fixed URL regex escaping in the generated ego-browser script.
+- `2026.08.03`: Medium runner — warms the article cache before import (PowerBoost served cold pages too slowly for Medium's crawler), real keyboard typing for the new import UI, backoff after failure; WP-Cron no longer logs fake Medium successes.
 - `1.2.6`: admin bar — replaced `PK SocialSharing` text with a dashicons icon.
 - `1.1.9`: X browser runner — token-authenticated REST queue + daily cap to automate X sharing via a local cron on your Mac without API credits.
 - `1.1.8`: X browser share avoids duplicate URLs when the article is already included in the text.
