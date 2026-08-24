@@ -47,6 +47,27 @@ async function release(config, postId) {
 	await wpCall(config, 'POST', 'medium-browser/release', { post_id: postId }).catch(() => {});
 }
 
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+
+// o2switch-PowerBoost sert les pages hors cache trop lentement au crawler Medium
+// ("The server stopped responding"). On pré-charge la page pour chauffer le cache,
+// sinon l'import échoue. Retourne le dernier code HTTP (0 si erreur réseau).
+async function warmCache(link) {
+	let last = 0;
+	for (let i = 0; i < 3; i++) {
+		try {
+			const res = await fetch(link, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(30000) });
+			last = res.status;
+			await res.arrayBuffer().catch(() => {});
+			log(`warm cache ${i + 1}/3: HTTP ${res.status}`);
+		} catch (e) {
+			log(`warm cache ${i + 1}/3 échec: ${e.message}`);
+			return 0;
+		}
+	}
+	return last;
+}
+
 // Script ego-browser : colle l'URL dans medium.com/p/import, clique Importer,
 // puis Publish si autopublish. Retourne { ok, manual?, medium_post_url?, error? }.
 function mediumScript(next, opts) {
@@ -58,9 +79,12 @@ try {
 	const tb = 'div[role="textbox"]'
 	await waitForElement(tb, { timeout: 15 })
 	await click(tb, { label: 'champ import medium' })
-	const typed = await js(String.raw\`(() => {
+	await js(String.raw\`(() => {
 		document.execCommand('selectAll')
-		document.execCommand('insertText', false, ${JSON.stringify(next.link)})
+		document.execCommand('delete')
+	})()\`)
+	await typeText(${JSON.stringify(next.link)})
+	const typed = await js(String.raw\`(() => {
 		const el = document.querySelector('div[role="textbox"]')
 		return !!(el && (el.textContent || '').includes(${JSON.stringify(next.link)}))
 	})()\`)
@@ -71,27 +95,33 @@ try {
 		cliLog('RESULT ' + JSON.stringify({ ok: true, manual: true }))
 	} else {
 		await wait(${(opts.humanDelayMs / 1000).toFixed(2)})
-		const clicked = await js(String.raw\`(() => {
+		const importButton = await js(String.raw\`(() => {
 			const button = [...document.querySelectorAll('button, [role="button"]')].find((element) => {
 				const text = (element.textContent || '').trim()
 				return /^import$/i.test(text) || /^importer$/i.test(text)
 			})
-			if (!button) return false
-			button.click()
-			return true
+			if (!button) return ''
+			button.setAttribute('data-pk-medium-import', '1')
+			return '[data-pk-medium-import="1"]'
 		})()\`)
-		if (!clicked) throw new Error('bouton Importer introuvable; Medium a probablement changé son interface')
+		if (!importButton) throw new Error('bouton Importer introuvable; Medium a probablement changé son interface')
+		await click(importButton, { label: 'importer sur Medium' })
 
-		const importUrl = ${JSON.stringify(next.import_url)}
 		const deadline = Date.now() + ${opts.importTimeoutMs}
-		let info = await pageInfo()
-		while (info.url && info.url.startsWith(importUrl) && Date.now() < deadline) {
+		let editorUrl = ''
+		while (Date.now() < deadline) {
+			let info
+			try { info = await pageInfo() } catch (_) { await wait(1); continue }
+			if (/^https:\/\/medium\.com\/p\/[a-f0-9]+\/edit(?:[?#]|$)/i.test(info.url || '')) {
+				editorUrl = info.url
+				break
+			}
+			const failed = await js(String.raw\`(() => /import failed/i.test(document.body ? document.body.innerText : ''))()\`)
+			if (failed) throw new Error('Medium n’a pas pu importer l’article')
 			await wait(1)
-			info = await pageInfo()
 		}
-		if (info.url && info.url.startsWith(importUrl)) throw new Error('redirection après import absente')
+		if (!editorUrl) throw new Error('éditeur Medium introuvable après import')
 		await wait(3)
-		const editorUrl = info.url
 
 		let mediumPostUrl = ''
 		if (${opts.autopublish}) {
@@ -151,23 +181,30 @@ async function processNext(config, next) {
 	const postId = next.post_id;
 	log(`POST #${postId} « ${next.title} » — ${next.link} (moteur ego-browser)`);
 
+	const warm = await warmCache(next.link);
+	if (warm !== 200) {
+		log(`POST #${postId} ECHEC: article inaccessible (HTTP ${warm}) — claim libéré.`);
+		await release(config, postId);
+		return false;
+	}
+
 	const autoclick = config.autoclick_override === null ? !!next.autoclick : !!config.autoclick_override;
 	const result = await runEgo(config, mediumScript(next, {
 		autoclick,
 		humanDelayMs: config.human_delay_ms || 1500,
-		importTimeoutMs: config.click_timeout_ms || 30000,
+		importTimeoutMs: Math.max(config.click_timeout_ms || 0, 60000),
 		autopublish: config.autopublish === undefined ? true : !!config.autopublish,
 	}), 240000);
 
 	if (!result.ok) {
 		log(`POST #${postId} ECHEC: ${result.error} — claim libéré.`);
 		await release(config, postId);
-		return true;
+		return false;
 	}
 	if (result.manual) {
 		log(`POST #${postId}: URL collée dans EgoLite, validation manuelle requise.`);
 		await release(config, postId);
-		return true;
+		return false;
 	}
 
 	log(`POST #${postId}: import OK, éditeur ouvert — ${result.editor_url || '?'}`);
@@ -214,7 +251,8 @@ async function daemon() {
 				await sleep(POLL_INTERVAL_MS);
 				continue;
 			}
-			await processNext(config, response.data);
+			const processed = await processNext(config, response.data);
+			if (!processed) await sleep(ERROR_BACKOFF_MS);
 			// dès qu'un post est traité, on reboucle tout de suite au cas où la queue contient plusieurs posts
 			continue;
 		} catch (error) {

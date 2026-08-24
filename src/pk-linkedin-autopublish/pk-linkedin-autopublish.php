@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 1.3.12
+ * Version: 1.3.13
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -4541,7 +4541,7 @@ final class PKLIAP_Plugin {
 		}
 
 		// Medium traité immédiatement pour ne pas dépendre uniquement du WP-Cron.
-		if ((!empty($opt['medium_enabled']) || !empty($opt['medium_browser_enabled'])) && (!$medium_already || !empty($opt['share_on_update']))) {
+		if (!empty($opt['medium_enabled']) && empty($opt['medium_browser_enabled']) && (!$medium_already || !empty($opt['share_on_update']))) {
 			try {
 				$medium_res = self::share_post_to_medium($post->ID, false);
 				if (is_wp_error($medium_res)) {
@@ -4572,7 +4572,8 @@ final class PKLIAP_Plugin {
 			'facebook'  => ['enabled' => !empty($opt['fb_enabled']), 'callback' => 'share_post_to_facebook',  'err_key' => 'last_fb_error'],
 			'instagram' => ['enabled' => !empty($opt['ig_enabled']), 'callback' => 'share_post_to_instagram', 'err_key' => 'last_ig_error'],
 			'threads'   => ['enabled' => !empty($opt['threads_enabled']), 'callback' => 'share_post_to_threads', 'err_key' => 'last_threads_error'],
-			'medium'    => ['enabled' => !empty($opt['medium_enabled']) || !empty($opt['medium_browser_enabled']), 'callback' => 'share_post_to_medium', 'err_key' => 'last_medium_error'],
+			// Le runner navigateur a sa propre file et ne doit pas être relancé par WP-Cron.
+			'medium'    => ['enabled' => !empty($opt['medium_enabled']) && empty($opt['medium_browser_enabled']), 'callback' => 'share_post_to_medium', 'err_key' => 'last_medium_error'],
 		];
 
 		foreach ($networks as $net => $cfg) {
@@ -4686,7 +4687,7 @@ final class PKLIAP_Plugin {
 			'facebook' => ['enabled' => !empty($opt['fb_enabled']), 'callback' => 'share_post_to_facebook', 'err_key' => 'last_fb_error', 'meta' => self::META_FB_SHARED_AT],
 			'instagram' => ['enabled' => !empty($opt['ig_enabled']), 'callback' => 'share_post_to_instagram', 'err_key' => 'last_ig_error', 'meta' => self::META_IG_SHARED_AT],
 			'threads' => ['enabled' => !empty($opt['threads_enabled']), 'callback' => 'share_post_to_threads', 'err_key' => 'last_threads_error', 'meta' => self::META_THREADS_SHARED_AT],
-			'medium' => ['enabled' => !empty($opt['medium_enabled']) || !empty($opt['medium_browser_enabled']), 'callback' => 'share_post_to_medium', 'err_key' => 'last_medium_error', 'meta' => self::META_MEDIUM_SHARED_AT],
+			'medium' => ['enabled' => !empty($opt['medium_enabled']) && empty($opt['medium_browser_enabled']), 'callback' => 'share_post_to_medium', 'err_key' => 'last_medium_error', 'meta' => self::META_MEDIUM_SHARED_AT],
 		];
 	}
 
