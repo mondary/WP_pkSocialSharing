@@ -113,6 +113,7 @@ Mise à jour live :
 
 ## 🧾 Changelog
  
+- `2026.08.06` : runner Medium — confirmation de publication adaptée à la nouvelle page `/submission` de Medium, retrait du contournement « bouton Import » (inutile).
 - `2026.08.05` : endpoint REST read-only `pksocialsharing/v1/shares?limit=N` (statuts de partage par article, auth application password).
 - `2026.08.04` : correction de l'échappement de la regex d'URL dans le script ego-browser généré.
 - `2026.08.03` : runner Medium — pré-chauffage du cache de l'article avant import (PowerBoost servait les pages froides trop lentement au crawler Medium), frappe clavier réelle pour la nouvelle UI d'import, backoff après échec ; WP-Cron ne journalise plus de faux succès Medium.

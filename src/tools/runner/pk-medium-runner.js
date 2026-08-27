@@ -77,18 +77,6 @@ try {
 	await openOrReuseTab(${JSON.stringify(next.import_url)}, { wait: true, timeout: 60 })
 	await wait(2)
 	const tb = 'div[role="textbox"]'
-	// UI Medium 08/2026: le champ URL n'apparait qu'apres un clic sur le bouton "Import".
-	const tbPresent = await js('!!document.querySelector("div[role=\\"textbox\\"]")')
-	if (!tbPresent) {
-		const openSel = await js(String.raw\`(() => {
-			const button = [...document.querySelectorAll('button, [role="button"]')].find((element) => /^import\$/i.test((element.textContent || '').trim()))
-			if (!button) return ''
-			button.setAttribute('data-pk-medium-open', '1')
-			return '[data-pk-medium-open="1"]'
-		})\`)
-		if (!openSel) throw new Error('bouton Import introuvable; Medium a probablement changé son interface')
-		await click(openSel, { label: 'ouvrir le panneau import Medium' })
-	}
 	await waitForElement(tb, { timeout: 15 })
 	await click(tb, { label: 'champ import medium' })
 	await js(String.raw\`(() => {
@@ -151,27 +139,25 @@ try {
 				// brouillon laissé sur Medium
 			} else {
 				await wait(5)
-				const confirmed = await js(String.raw\`(() => {
-					const buttons = [...document.querySelectorAll('button, [role="button"]')]
-					const wide = buttons.filter((el) => {
-						const t = (el.textContent || '').trim()
-						if (!/^publish$/i.test(t) && !/^publish now$/i.test(t) && !/^publier$/i.test(t)) return false
-						const rect = el.getBoundingClientRect()
-						if (rect.width < 150) return false
-						const style = window.getComputedStyle(el)
-						if (style.display === 'none' || style.visibility === 'hidden') return false
-						return true
-					})
-					if (wide.length === 0) return false
-					wide[wide.length - 1].click()
-					return true
-				})()\`)
+			const confirmed = await js(String.raw\`(() => {
+				// UI 08/2026: apres Publish, page /submission avec Submit (42px), Publish (69px), Schedule.
+				const matches = [...document.querySelectorAll('button, [role="button"]')].filter((el) => {
+					const t = (el.textContent || '').trim()
+					if (!/^(publish|publish now|publier|submit)$/i.test(t)) return false
+					const style = window.getComputedStyle(el)
+					if (style.display === 'none' || style.visibility === 'hidden') return false
+					return el.getBoundingClientRect().width > 0
+				})
+				if (matches.length === 0) return false
+				matches.sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0].click()
+				return true
+			})()\`)
 				if (!confirmed) {
 					// brouillon laissé sur Medium
 				} else {
 					const deadline2 = Date.now() + 30000
 					let info2 = await pageInfo()
-					while (info2.url && /\\/(edit|p\\/edit|new)\\b/i.test(info2.url) && Date.now() < deadline2) {
+					while (info2.url && /\\/(edit|submission|new)\\b/i.test(info2.url) && Date.now() < deadline2) {
 						await wait(1)
 						info2 = await pageInfo()
 					}
