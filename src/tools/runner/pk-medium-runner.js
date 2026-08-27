@@ -77,6 +77,18 @@ try {
 	await openOrReuseTab(${JSON.stringify(next.import_url)}, { wait: true, timeout: 60 })
 	await wait(2)
 	const tb = 'div[role="textbox"]'
+	// UI Medium 08/2026: le champ URL n'apparait qu'apres un clic sur le bouton "Import".
+	const tbPresent = await js('!!document.querySelector("div[role=\\"textbox\\"]")')
+	if (!tbPresent) {
+		const openSel = await js(String.raw\`(() => {
+			const button = [...document.querySelectorAll('button, [role="button"]')].find((element) => /^import\$/i.test((element.textContent || '').trim()))
+			if (!button) return ''
+			button.setAttribute('data-pk-medium-open', '1')
+			return '[data-pk-medium-open="1"]'
+		})\`)
+		if (!openSel) throw new Error('bouton Import introuvable; Medium a probablement changé son interface')
+		await click(openSel, { label: 'ouvrir le panneau import Medium' })
+	}
 	await waitForElement(tb, { timeout: 15 })
 	await click(tb, { label: 'champ import medium' })
 	await js(String.raw\`(() => {

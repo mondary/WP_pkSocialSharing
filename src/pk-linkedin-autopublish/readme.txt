@@ -4,7 +4,7 @@ Tags: linkedin, facebook, instagram, threads, medium, x, twitter, social, autopu
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2026.08.04
+Stable tag: 2026.08.05
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram, Threads et Medium lors de la publication.
@@ -43,6 +43,9 @@ Fonctionnalites :
 * Medium necessite un integration token disponible dans les reglages Medium du compte.
 
 == Changelog ==
+
+= 2026.08.05 =
+* Endpoint REST read-only /wp-json/pksocialsharing/v1/shares?limit=N : statuts de partage par article (tous reseaux, dates et URLs), auth application password.
 
 = 2026.08.04 =
 * Runner Medium: correction de l'echappement de la regex d'URL dans le script ego-browser genere.

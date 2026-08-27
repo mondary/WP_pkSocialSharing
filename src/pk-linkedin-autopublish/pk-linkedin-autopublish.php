@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.08.04
+ * Version: 2026.08.05
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -64,6 +64,7 @@ final class PKLIAP_Plugin {
 		// n'écrivent aucun fichier: elles s'enregistrent toujours, sans PKLIAP_ENABLE_SYNC_ROUTES.
 		add_action('rest_api_init', [__CLASS__, 'register_x_browser_routes']);
 		add_action('rest_api_init', [__CLASS__, 'register_medium_browser_routes']);
+		add_action('rest_api_init', [__CLASS__, 'register_shares_routes']);
 		add_filter('cron_schedules', [__CLASS__, 'cron_schedules']);
 		add_action('init', [__CLASS__, 'maybe_schedule_retry_cron']);
 
@@ -500,6 +501,71 @@ final class PKLIAP_Plugin {
 			'permission_callback' => [__CLASS__, 'medium_browser_rest_check'],
 			'callback' => [__CLASS__, 'rest_medium_browser_clear_queue'],
 		]);
+	}
+
+	public static function register_shares_routes(): void {
+		$shares_check = static function (WP_REST_Request $request): bool {
+			return current_user_can('manage_options')
+				|| PKLIAP_Plugin::x_browser_rest_check($request)
+				|| PKLIAP_Plugin::medium_browser_rest_check($request);
+		};
+		register_rest_route(self::SYNC_NAMESPACE, '/shares', [
+			'methods' => 'GET',
+			'permission_callback' => $shares_check,
+			'callback' => [__CLASS__, 'rest_shares_overview'],
+		]);
+		register_rest_route(self::SYNC_NAMESPACE, '/shares/retry', [
+			'methods' => 'POST',
+			'permission_callback' => static fn() => current_user_can('manage_options'),
+			'callback' => [__CLASS__, 'rest_shares_retry'],
+		]);
+	}
+
+	public static function rest_shares_retry(WP_REST_Request $request): WP_REST_Response {
+		$network = sanitize_key((string)($request->get_param('network') ?: 'all'));
+		$limit = min(100, max(1, (int)$request->get_param('limit') ?: 10));
+		$result = self::process_pending_shares($network, $limit);
+		$opt = self::get_options();
+		$errors = [];
+		foreach (['last_share_error', 'last_x_error', 'last_fb_error', 'last_ig_error', 'last_threads_error', 'last_medium_error'] as $k) {
+			if (!empty($opt[$k])) {
+				$errors[$k] = (string)$opt[$k];
+			}
+		}
+		return new WP_REST_Response(['result' => $result, 'last_errors' => $errors], 200);
+	}
+
+	public static function rest_shares_overview(WP_REST_Request $request): WP_REST_Response {
+		$limit = min(100, max(1, (int)$request->get_param('limit') ?: 20));
+		$opt = self::get_options();
+		$post_types = array_values(array_filter((array)($opt['post_type_whitelist'] ?? []))) ?: ['post'];
+		$q = new WP_Query([
+			'post_type' => $post_types,
+			'post_status' => 'publish',
+			'posts_per_page' => $limit,
+			'orderby' => 'date',
+			'order' => 'DESC',
+			'no_found_rows' => true,
+		]);
+		$items = [];
+		foreach ($q->posts as $post) {
+			$shares = [];
+			foreach (self::build_post_share_status_items($post->ID) as $s) {
+				$shares[(string)$s['key']] = [
+					'shared_at' => (int)$s['shared_at'],
+					'url' => (string)$s['url'],
+					'id' => (string)$s['id'],
+				];
+			}
+			$items[] = [
+				'id' => (int)$post->ID,
+				'title' => html_entity_decode(wp_strip_all_tags(get_the_title($post)), ENT_QUOTES, get_bloginfo('charset')),
+				'date' => get_post_time('c', true, $post),
+				'link' => (string)get_permalink($post),
+				'shares' => $shares,
+			];
+		}
+		return new WP_REST_Response(['generated_at' => time(), 'items' => $items], 200);
 	}
 
 	public static function medium_browser_rest_check(WP_REST_Request $request): bool {
@@ -6140,7 +6206,7 @@ final class PKLIAP_Plugin {
 	private static function wait_for_linkedin_image(string $image_urn, array $opt) {
 		$last_error = null;
 
-		for ($attempt = 0; $attempt < 6; $attempt++) {
+		for ($attempt = 0; $attempt < 15; $attempt++) {
 			$status_res = self::linkedin_get_image($image_urn, (string)$opt['access_token'], (string)$opt['linkedin_version'], true);
 			if (
 				is_wp_error($status_res)
@@ -6161,8 +6227,8 @@ final class PKLIAP_Plugin {
 				}
 			}
 
-			if ($attempt < 5) {
-				sleep(2);
+			if ($attempt < 14) {
+				sleep(3);
 			}
 		}
 

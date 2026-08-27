@@ -58,6 +58,52 @@ case "${1:-status}" in
         echo "Processus actifs :"
         ps aux | grep -E "pk-(x-runner|medium-runner)" | grep -v grep || echo "Aucun processus."
         ;;
+    posts)
+        CONFIG="$HOME/.config/pk-x-runner.json"
+        if [[ ! -f "$CONFIG" ]]; then
+            echo "Config introuvable : $CONFIG"
+            exit 1
+        fi
+        WP_URL=$(python3 -c "import json;print(json.load(open('$CONFIG'))['wp_url'])")
+        TOKEN=$(python3 -c "import json;print(json.load(open('$CONFIG'))['runner_token'])")
+        LIMIT="${2:-20}"
+        curl -sf -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" \
+            -H "X-PK-Runner-Token: $TOKEN" \
+            "$WP_URL/wp-json/pksocialsharing/v1/shares?limit=$LIMIT" | python3 -c '
+import json, sys, datetime
+d = json.load(sys.stdin)
+NETS = [("linkedin", "LinkedIn"), ("x", "X"), ("medium", "Medium")]
+def when(ts):
+    return datetime.datetime.fromtimestamp(ts).strftime("%d/%m %H:%M") if ts else ""
+late = []
+for it in d.get("items", []):
+    date = datetime.datetime.fromisoformat(it["date"]).strftime("%d/%m %H:%M")
+    pid = it["id"]
+    title = it["title"]
+    link = it["link"]
+    print(f"#{pid}  {date}  {title}")
+    print(f"       {link}")
+    cells = []
+    for key, label in NETS:
+        s = it["shares"][key]
+        ts = s["shared_at"]
+        u = s["url"]
+        if ts:
+            cell = f"{label} OK {when(ts)}" + (f" -> {u}" if u else "")
+        else:
+            cell = f"{label} -- "
+            late.append((title, label))
+        cells.append(cell)
+    print("       " + "  |  ".join(cells))
+print()
+if late:
+    print(f"EN RETARD ({len(late)} partages manquants) :")
+    for title, label in late:
+        print(f"  - {label} : {title}")
+else:
+    print("Tout est partagé sur LinkedIn, X et Medium. Rien en retard.")
+'
+        ;;
     logs)
         case "${2:-all}" in
             x) tail -f ~/.local/log/pk-x-runner.log ~/.local/log/pk-x-runner.err 2>/dev/null ;;
@@ -71,7 +117,7 @@ case "${1:-status}" in
         echo "Kill switch retiré. Utilise '$0 start' pour charger les runners."
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|run-x|run-medium|status|logs [x|medium|all]|enable}"
+        echo "Usage: $0 {start|stop|restart|run-x|run-medium|status|posts [limite]|logs [x|medium|all]|enable}"
         exit 1
         ;;
 esac
