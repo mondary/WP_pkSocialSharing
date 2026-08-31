@@ -280,7 +280,7 @@ Logs : `~/.local/log/pk-x-runner.log` et `~/.local/log/pk-medium-runner.log`
 Comportement :
 - claim de 15 minutes par article (évite deux runners sur le même post) ;
 - plafond quotidien configurable côté WordPress ;
-- en cas d'erreur (réseau), réessaie après 60 s ;
+- en cas d'erreur, l'onglet en échec est fermé et l'article reste réservé 15 min avant une nouvelle tentative ;
 - `autopublish: true` par défaut — clique Importer **puis** Publish dans la modal Medium. Mettre `false` pour ne créer que le brouillon ;
 - décocher « Le runner clique automatiquement sur Importer » dans l'admin pour garder une validation humaine finale.
 

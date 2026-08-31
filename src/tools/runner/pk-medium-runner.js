@@ -43,10 +43,6 @@ async function wpCall(config, method, route, body) {
 	return { ok: response.ok, status: response.status, data };
 }
 
-async function release(config, postId) {
-	await wpCall(config, 'POST', 'medium-browser/release', { post_id: postId }).catch(() => {});
-}
-
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
 // o2switch-PowerBoost sert les pages hors cache trop lentement au crawler Medium
@@ -170,6 +166,7 @@ try {
 		cliLog('RESULT ' + JSON.stringify({ ok: true, medium_post_url: mediumPostUrl, editor_url: editorUrl }))
 	}
 } catch (e) {
+	try { await completeTaskSpace(task.id, { keep: false }) } catch (_) {}
 	cliLog('RESULT ' + JSON.stringify({ ok: false, error: String(e && e.message || e) }))
 }
 `;
@@ -181,8 +178,7 @@ async function processNext(config, next) {
 
 	const warm = await warmCache(next.link);
 	if (warm !== 200) {
-		log(`POST #${postId} ECHEC: article inaccessible (HTTP ${warm}) — claim libéré.`);
-		await release(config, postId);
+		log(`POST #${postId} ECHEC: article inaccessible (HTTP ${warm}) — claim conservé 15 min.`);
 		return false;
 	}
 
@@ -195,13 +191,11 @@ async function processNext(config, next) {
 	}), 240000);
 
 	if (!result.ok) {
-		log(`POST #${postId} ECHEC: ${result.error} — claim libéré.`);
-		await release(config, postId);
+		log(`POST #${postId} ECHEC: ${result.error} — claim conservé 15 min.`);
 		return false;
 	}
 	if (result.manual) {
-		log(`POST #${postId}: URL collée dans EgoLite, validation manuelle requise.`);
-		await release(config, postId);
+		log(`POST #${postId}: URL collée dans EgoLite, validation manuelle requise — claim conservé 15 min.`);
 		return false;
 	}
 
