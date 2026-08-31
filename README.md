@@ -113,6 +113,7 @@ Mise à jour live :
 
 ## 🧾 Changelog
  
+- `2026.08.07` : skip Medium — après 3 échecs consécutifs le runner retire l'article de la queue WP (récupérable via « Remettre dans la queue ») pour ne pas marteler Medium ; endpoint REST `POST /medium-browser/skip`.
 - `2026.08.06` : runner Medium — confirmation de publication adaptée à la nouvelle page `/submission` de Medium, retrait du contournement « bouton Import » (inutile).
 - `2026.08.05` : endpoint REST read-only `pksocialsharing/v1/shares?limit=N` (statuts de partage par article, auth application password).
 - `2026.08.04` : correction de l'échappement de la regex d'URL dans le script ego-browser généré.

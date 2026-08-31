@@ -43,6 +43,40 @@ async function wpCall(config, method, route, body) {
 	return { ok: response.ok, status: response.status, data };
 }
 
+// Apres MAX_FAILS echecs consecutifs, le post est retire de la queue WP (recuperable
+// via « Remettre dans la queue » dans l'admin) pour ne pas marteler Medium.
+const MAX_FAILS = 3;
+const FAIL_STATE = process.env.PK_MEDIUM_RUNNER_FAILS || path.join(process.env.HOME || '/root', '.local', 'run', 'pk-medium-runner-fails.json');
+
+function loadFails() {
+	try { return JSON.parse(fs.readFileSync(FAIL_STATE, 'utf8')); } catch (_) { return {}; }
+}
+
+function saveFails(fails) {
+	fs.mkdirSync(path.dirname(FAIL_STATE), { recursive: true });
+	fs.writeFileSync(FAIL_STATE, JSON.stringify(fails));
+}
+
+function clearFails(postId) {
+	const fails = loadFails();
+	if (fails[postId]) { delete fails[postId]; saveFails(fails); }
+}
+
+async function registerFail(config, postId, reason) {
+	const fails = loadFails();
+	const count = (fails[postId] || 0) + 1;
+	delete fails[postId];
+	if (count >= MAX_FAILS) {
+		saveFails(fails);
+		await wpCall(config, 'POST', 'medium-browser/skip', { post_id: postId }).catch(() => {});
+		log(`POST #${postId}: ${count} echecs consecutifs — retire de la queue (${reason}). Remettre via « Remettre dans la queue » dans WP.`);
+		return;
+	}
+	fails[postId] = count;
+	saveFails(fails);
+	log(`POST #${postId}: echec ${count}/${MAX_FAILS} (${reason}).`);
+}
+
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
 // o2switch-PowerBoost sert les pages hors cache trop lentement au crawler Medium
@@ -179,6 +213,7 @@ async function processNext(config, next) {
 	const warm = await warmCache(next.link);
 	if (warm !== 200) {
 		log(`POST #${postId} ECHEC: article inaccessible (HTTP ${warm}) — claim conservé 15 min.`);
+		await registerFail(config, postId, `article inaccessible HTTP ${warm}`);
 		return false;
 	}
 
@@ -192,10 +227,12 @@ async function processNext(config, next) {
 
 	if (!result.ok) {
 		log(`POST #${postId} ECHEC: ${result.error} — claim conservé 15 min.`);
+		await registerFail(config, postId, result.error);
 		return false;
 	}
 	if (result.manual) {
 		log(`POST #${postId}: URL collée dans EgoLite, validation manuelle requise — claim conservé 15 min.`);
+		clearFails(postId);
 		return false;
 	}
 
@@ -203,8 +240,10 @@ async function processNext(config, next) {
 	const done = await wpCall(config, 'POST', 'medium-browser/done', { post_id: postId, medium_post_url: result.medium_post_url || '' });
 	if (!done.ok) {
 		log(`POST #${postId} ERREUR /done HTTP ${done.status} — importé mais non marqué, vérifie WP.`);
+		clearFails(postId);
 		return false;
 	}
+	clearFails(postId);
 	log(`POST #${postId}: import Medium marqué comme traité${result.medium_post_url ? ' et publié' : ' (brouillon)'}.`);
 	return true;
 }

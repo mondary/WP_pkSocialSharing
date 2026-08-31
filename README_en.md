@@ -112,6 +112,7 @@ Live update:
 
 ## 🧾 Changelog
 
+- `2026.08.07`: Medium skip — after 3 consecutive failures the runner removes the article from the WP queue (recoverable via "Remettre dans la queue") so Medium is no longer hammered; REST endpoint `POST /medium-browser/skip`.
 - `2026.08.06`: Medium runner — publish confirmation adapted to Medium's new `/submission` page, removed the unneeded "Import" button workaround.
 - `2026.08.05`: read-only REST endpoint `pksocialsharing/v1/shares?limit=N` (per-post share statuses, application password auth).
 - `2026.08.04`: fixed URL regex escaping in the generated ego-browser script.

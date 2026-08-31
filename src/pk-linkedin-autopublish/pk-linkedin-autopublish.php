@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.08.06
+ * Version: 2026.08.07
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -484,7 +484,7 @@ final class PKLIAP_Plugin {
 	}
 
 	public static function register_medium_browser_routes(): void {
-		foreach (['next' => 'rest_medium_browser_next', 'done' => 'rest_medium_browser_done', 'release' => 'rest_medium_browser_release', 'status' => 'rest_medium_browser_status'] as $action => $callback) {
+		foreach (['next' => 'rest_medium_browser_next', 'done' => 'rest_medium_browser_done', 'release' => 'rest_medium_browser_release', 'skip' => 'rest_medium_browser_skip', 'status' => 'rest_medium_browser_status'] as $action => $callback) {
 			register_rest_route(self::SYNC_NAMESPACE, '/medium-browser/' . $action, [
 				'methods' => in_array($action, ['next', 'status'], true) ? 'GET' : 'POST',
 				'permission_callback' => [__CLASS__, 'medium_browser_rest_check'],
@@ -843,6 +843,15 @@ final class PKLIAP_Plugin {
 		if (!$post_id) return new WP_REST_Response(['error' => 'post_id manquant'], 400);
 		delete_post_meta($post_id, self::META_MEDIUM_BROWSER_CLAIMED_AT);
 		self::medium_browser_record_run('released');
+		return new WP_REST_Response(['ok' => true], 200);
+	}
+
+	public static function rest_medium_browser_skip(WP_REST_Request $request): WP_REST_Response {
+		$post_id = (int)$request->get_param('post_id');
+		if (!$post_id) return new WP_REST_Response(['error' => 'post_id manquant'], 400);
+		update_post_meta($post_id, self::META_MEDIUM_BROWSER_SKIPPED_AT, time());
+		delete_post_meta($post_id, self::META_MEDIUM_BROWSER_CLAIMED_AT);
+		self::medium_browser_record_run('skipped');
 		return new WP_REST_Response(['ok' => true], 200);
 	}
 
