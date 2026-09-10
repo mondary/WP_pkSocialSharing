@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.08.07
+ * Version: 2026.08.09
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -88,6 +88,7 @@ final class PKLIAP_Plugin {
 		add_action('admin_post_pkliap_meta_connect', [__CLASS__, 'handle_meta_connect']);
 		add_action('admin_post_pkliap_meta_oauth_callback', [__CLASS__, 'handle_meta_oauth_callback']);
 		add_action('admin_post_pkliap_translate_test', [__CLASS__, 'handle_translate_test']);
+		add_action('admin_post_pkliap_dry_run_network', [__CLASS__, 'handle_dry_run_network']);
 		add_action('admin_post_pkliap_gemini_models', [__CLASS__, 'handle_gemini_models']);
 		add_action('admin_post_pkliap_opencode_models', [__CLASS__, 'handle_opencode_models']);
 
@@ -674,6 +675,8 @@ final class PKLIAP_Plugin {
 			update_post_meta($post_id, self::META_X_POST_ID, $x_post_id);
 		}
 		self::x_browser_increment_daily();
+		// A browser publication is a successful share too: clear a previous API error.
+		self::update_options(['last_x_error' => '', 'last_x_error_at' => 0]);
 		self::x_browser_record_run('done');
 		self::debug_log_event("X browser share done for post #$post_id.");
 		return new WP_REST_Response(['ok' => true], 200);
@@ -2340,10 +2343,11 @@ final class PKLIAP_Plugin {
 												</div>
 											</td>
 											<td><?php echo $x_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
-											<td>
-											<a class="button button-secondary" href="<?php echo esc_url($x_action_url); ?>"><?php echo esc_html($x_action_label); ?></a>
-												<a class="button" style="margin-top:6px;" href="<?php echo esc_url($x_intent_url); ?>" target="_blank" rel="noopener">Publier via navigateur</a>
-											</td>
+										<td>
+										<a class="button button-secondary" href="<?php echo esc_url($x_action_url); ?>"><?php echo esc_html($x_action_label); ?></a>
+											<a class="button" style="margin-top:6px;" href="<?php echo esc_url($x_intent_url); ?>" target="_blank" rel="noopener">Publier via navigateur</a>
+											<a style="display:block;margin-top:6px;" href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_dry_run_network') . '&network=x&post_id=' . (int)$p->ID, 'pkliap_dry_run_network_' . (int)$p->ID)); ?>">Dry-run (ne publie pas)</a>
+										</td>
 										</tr>
 									<?php endforeach; ?>
 								<?php endif; ?>
@@ -2489,7 +2493,7 @@ final class PKLIAP_Plugin {
 												</div>
 											</td>
 											<td><?php echo $fb_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
-											<td><a class="button button-secondary" href="<?php echo esc_url($fb_action_url); ?>">Publier maintenant</a></td>
+											<td><a class="button button-secondary" href="<?php echo esc_url($fb_action_url); ?>">Publier maintenant</a><br/><a href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_dry_run_network') . '&network=facebook&post_id=' . (int)$p->ID, 'pkliap_dry_run_network_' . (int)$p->ID)); ?>">Dry-run (ne publie pas)</a></td>
 										</tr>
 									<?php endforeach; ?>
 								<?php endif; ?>
@@ -2625,7 +2629,7 @@ final class PKLIAP_Plugin {
 												</div>
 											</td>
 											<td><?php echo $ig_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
-											<td><a class="button button-secondary" href="<?php echo esc_url($ig_action_url); ?>">Publier maintenant</a></td>
+											<td><a class="button button-secondary" href="<?php echo esc_url($ig_action_url); ?>">Publier maintenant</a><br/><a href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_dry_run_network') . '&network=instagram&post_id=' . (int)$p->ID, 'pkliap_dry_run_network_' . (int)$p->ID)); ?>">Dry-run (ne publie pas)</a></td>
 										</tr>
 									<?php endforeach; ?>
 								<?php endif; ?>
@@ -2745,7 +2749,7 @@ final class PKLIAP_Plugin {
 												</div>
 											</td>
 											<td><?php echo $threads_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
-											<td><a class="button button-secondary" href="<?php echo esc_url($threads_action_url); ?>">Publier maintenant</a></td>
+											<td><a class="button button-secondary" href="<?php echo esc_url($threads_action_url); ?>">Publier maintenant</a><br/><a href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_dry_run_network') . '&network=threads&post_id=' . (int)$p->ID, 'pkliap_dry_run_network_' . (int)$p->ID)); ?>">Dry-run (ne publie pas)</a></td>
 										</tr>
 									<?php endforeach; ?>
 								<?php endif; ?>
@@ -2847,7 +2851,7 @@ final class PKLIAP_Plugin {
 												</div>
 											</td>
 											<td><?php echo $medium_status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
-											<td><a class="button button-secondary" href="<?php echo esc_url($medium_action_url); ?>"><?php echo esc_html($medium_action_label); ?></a></td>
+											<td><a class="button button-secondary" href="<?php echo esc_url($medium_action_url); ?>"><?php echo esc_html($medium_action_label); ?></a><br/><a href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_dry_run_network') . '&network=medium&post_id=' . (int)$p->ID, 'pkliap_dry_run_network_' . (int)$p->ID)); ?>">Dry-run (ne publie pas)</a></td>
 										</tr>
 									<?php endforeach; ?>
 								<?php endif; ?>
@@ -3208,7 +3212,7 @@ final class PKLIAP_Plugin {
 											</div>
 										</td>
 										<td><?php echo $status; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
-										<td><a class="button button-secondary" href="<?php echo esc_url($action_url); ?>">Publier maintenant</a></td>
+										<td><a class="button button-secondary" href="<?php echo esc_url($action_url); ?>">Publier maintenant</a><br/><a href="<?php echo esc_url(wp_nonce_url(self::admin_url_action('pkliap_dry_run_network') . '&network=linkedin&post_id=' . (int)$p->ID, 'pkliap_dry_run_network_' . (int)$p->ID)); ?>">Dry-run (ne publie pas)</a></td>
 									</tr>
 								<?php endforeach; ?>
 							<?php endif; ?>
@@ -4265,6 +4269,70 @@ final class PKLIAP_Plugin {
 		}
 		wp_safe_redirect(self::settings_url(['network' => 'dashboard', '_t' => time()]) . '#pks-translation-card');
 		exit;
+	}
+
+	/** Teste la configuration et compose le message sans publier sur le réseau. */
+	public static function handle_dry_run_network(): void {
+		if (!current_user_can('manage_options')) {
+			wp_die('Forbidden');
+		}
+		$network = isset($_REQUEST['network']) ? sanitize_key((string)wp_unslash($_REQUEST['network'])) : '';
+		$post_id = isset($_REQUEST['post_id']) ? (int)$_REQUEST['post_id'] : 0;
+		check_admin_referer('pkliap_dry_run_network_' . $post_id);
+		if (!in_array($network, ['linkedin', 'x', 'facebook', 'instagram', 'threads', 'medium'], true) || $post_id <= 0) {
+			self::set_flash('error', 'Dry-run : réseau ou article invalide.');
+			wp_safe_redirect(self::settings_url());
+			exit;
+		}
+		$post = get_post($post_id);
+		if (!$post || $post->post_status !== 'publish') {
+			self::set_flash('error', 'Dry-run : l’article doit être publié.');
+			wp_safe_redirect(self::settings_url(['network' => $network]));
+			exit;
+		}
+
+		$result = self::run_network_dry_run($network, $post_id);
+		self::set_flash($result['ok'] ? 'notice' : 'error', $result['message']);
+		wp_safe_redirect(self::settings_url(['network' => $network]));
+		exit;
+	}
+
+	/** @return array{ok:bool,message:string} */
+	private static function run_network_dry_run(string $network, int $post_id): array {
+		$opt = self::get_options();
+		$missing = [];
+		if ($network === 'linkedin' && (empty($opt['access_token']) || empty($opt['author_urn']))) {
+			$missing[] = 'token LinkedIn et Author URN';
+		} elseif ($network === 'x' && empty($opt['x_browser_enabled']) && (empty($opt['x_api_key']) || empty($opt['x_api_secret']) || empty($opt['x_access_token']) || empty($opt['x_access_token_secret']))) {
+			$missing[] = 'clés et token X OAuth 1.0a';
+		} elseif ($network === 'facebook' && (empty($opt['fb_page_id']) || empty($opt['fb_access_token']))) {
+			$missing[] = 'Page ID et token Facebook';
+		} elseif ($network === 'instagram' && (empty($opt['ig_user_id']) || empty($opt['ig_access_token']) || !get_post_thumbnail_id($post_id))) {
+			$missing[] = 'User ID, token Instagram et image mise en avant';
+		} elseif ($network === 'threads' && (empty($opt['threads_user_id']) || empty($opt['threads_access_token']))) {
+			$missing[] = 'User ID et token Threads';
+		} elseif ($network === 'medium' && empty($opt['medium_browser_enabled']) && empty($opt['medium_access_token'])) {
+			$missing[] = 'token Medium ou runner navigateur';
+		}
+		if ($missing) {
+			return ['ok' => false, 'message' => 'Dry-run ' . strtoupper($network) . ' échoué : il manque ' . implode(', ', $missing) . '. Rien n’a été publié.'];
+		}
+
+		$link = self::get_post_link($post_id, $opt);
+		$text = $network === 'linkedin' ? self::build_linkedin_text($post_id, $opt, $link) : self::build_x_text($post_id, $opt, $link);
+		if ($network === 'facebook') {
+			$text = self::build_facebook_text($post_id, $opt, $link);
+		} elseif ($network === 'instagram') {
+			$text = self::build_instagram_caption($post_id, $opt, $link);
+		} elseif ($network === 'threads') {
+			$text = self::build_threads_text($post_id, $opt, $link);
+		} elseif ($network === 'medium') {
+			$text = self::maybe_translate_field($post_id, 'title', wp_strip_all_tags(get_the_title($post_id)), (string)($opt['medium_share_lang'] ?? ''), $opt);
+		}
+		if (trim($text) === '') {
+			return ['ok' => false, 'message' => 'Dry-run ' . strtoupper($network) . ' échoué : le texte généré est vide. Rien n’a été publié.'];
+		}
+		return ['ok' => true, 'message' => 'Dry-run ' . strtoupper($network) . ' OK : configuration présente, texte généré, aucune publication effectuée. Aperçu : ' . self::mb_truncate($text, 240)];
 	}
 
 	public static function handle_gemini_models(): void {
@@ -5757,13 +5825,22 @@ final class PKLIAP_Plugin {
 	 * À injecter dans la subbox "Composition" de chaque onglet réseau.
 	 */
 	private static function render_share_lang_field(string $key, string $value): string {
+		$opt = self::get_options();
+		$source_lang = self::detect_source_language($opt);
+		$provider = (string)($opt['translate_provider'] ?? 'none');
+		$languages = self::available_share_languages();
 		$html = '<label>Langue du partage<br/>';
 		$html .= '<select name="' . esc_attr(self::OPT_KEY . '[' . $key . ']') . '">';
 		foreach (self::available_share_languages() as $code => $label) {
 			$html .= '<option value="' . esc_attr($code) . '"' . selected($code, $value, false) . '>' . esc_html($label . ($code !== '' ? ' (' . $code . ')' : '')) . '</option>';
 		}
 		$html .= '</select></label>';
-		$html .= '<p class="description" style="margin:4px 0 0;">"Langue originale" = pas de traduction. Sinon, le titre et l\'extrait sont traduits via le provider configuré dans le Dashboard.</p>';
+		$html .= '<p class="description" style="margin:4px 0 0;">"Langue originale" = pas de traduction. Sinon, le titre et l\'extrait sont traduits via le provider configuré dans le Dashboard. Source détectée : <code>' . esc_html($languages[$source_lang] ?? $source_lang) . ' (' . esc_html($source_lang) . ')</code>.</p>';
+		if ($value !== '' && $provider === 'none') {
+			$html .= '<p class="description" style="color:#b32d2e;margin:4px 0 0;"><strong>Traduction inactive :</strong> sélectionne un provider dans Dashboard, puis enregistre.</p>';
+		} elseif ($value !== '' && $value === $source_lang) {
+			$html .= '<p class="description" style="color:#996800;margin:4px 0 0;">La cible est identique à la source détectée : aucune traduction ne sera lancée. Si l’article est en français, règle explicitement la langue source sur <code>fr</code> dans Dashboard.</p>';
+		}
 		return $html;
 	}
 

@@ -113,6 +113,8 @@ Mise à jour live :
 
 ## 🧾 Changelog
  
+- `2026.08.09` : ajoute un lien `Dry-run (ne publie pas)` pour chaque réseau afin de vérifier la configuration et le texte généré avant toute publication réelle.
+- `2026.08.08` : efface l’erreur X historique après une publication réussie via le runner navigateur ; l’interface de langue indique désormais quand aucun provider n’est actif ou quand la langue source détectée empêche la traduction.
 - `2026.08.07` : skip Medium — après 3 échecs consécutifs le runner retire l'article de la queue WP (récupérable via « Remettre dans la queue ») pour ne pas marteler Medium ; endpoint REST `POST /medium-browser/skip`.
 - `2026.08.06` : runner Medium — confirmation de publication adaptée à la nouvelle page `/submission` de Medium, retrait du contournement « bouton Import » (inutile).
 - `2026.08.05` : endpoint REST read-only `pksocialsharing/v1/shares?limit=N` (statuts de partage par article, auth application password).
