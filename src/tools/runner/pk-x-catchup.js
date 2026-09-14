@@ -43,10 +43,12 @@ async function wpCall(cfg, method, route, body) {
 	const opts = {
 		method,
 		headers: { 'X-PK-Runner-Token': cfg.runner_token, Accept: 'application/json', 'User-Agent': UA },
-		signal: AbortSignal.timeout(60000),
+		signal: AbortSignal.timeout(180000),
 	};
 	if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
-	const res = await fetch(url, opts);
+	let res;
+	try { res = await fetch(url, opts); }
+	catch (e) { return { ok: false, status: 0, data: { error: String(e && e.message || e) } }; }
 	let data = {}; try { data = await res.json(); } catch (_) {}
 	return { ok: res.ok, status: res.status, data };
 }
@@ -82,7 +84,13 @@ try {
 async function enumerateViaNext(cfg) {
 	const items = [];
 	for (let i = 0; i < 100; i++) {
-		const r = await wpCall(cfg, 'GET', 'x-browser/next');
+		let r = null;
+		for (let t = 1; t <= 3; t++) {
+			r = await wpCall(cfg, 'GET', 'x-browser/next');
+			if (r.ok || r.status !== 0) break;
+			log(`/next timeout, essai ${t}/3`);
+			await sleep(5000 * t);
+		}
 		if (!r.ok) { log(`ERREUR /next HTTP ${r.status}: ${JSON.stringify(r.data)}`); break; }
 		if (r.data.empty) {
 			log(`Queue: ${r.data.reason} — ${items.length} article(s) à publier.`);
