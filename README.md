@@ -113,6 +113,7 @@ Mise à jour live :
 
 ## 🧾 Changelog
  
+- `2026.09.01` : endpoint REST `POST /shares/purge-ghosts` — détecte et purge les partages enregistrés avant la publication de l'article (articles reprogrammés), nettoie les flags skip des runners X/Medium, et remet tout dans la file de retry.
 - `2026.08.09` : ajoute un lien `Dry-run (ne publie pas)` pour chaque réseau afin de vérifier la configuration et le texte généré avant toute publication réelle.
 - `2026.08.08` : efface l’erreur X historique après une publication réussie via le runner navigateur ; l’interface de langue indique désormais quand aucun provider n’est actif ou quand la langue source détectée empêche la traduction.
 - `2026.08.07` : skip Medium — après 3 échecs consécutifs le runner retire l'article de la queue WP (récupérable via « Remettre dans la queue ») pour ne pas marteler Medium ; endpoint REST `POST /medium-browser/skip`.

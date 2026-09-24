@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.08.09
+ * Version: 2026.09.01
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -520,6 +520,63 @@ final class PKLIAP_Plugin {
 			'permission_callback' => static fn() => current_user_can('manage_options'),
 			'callback' => [__CLASS__, 'rest_shares_retry'],
 		]);
+		register_rest_route(self::SYNC_NAMESPACE, '/shares/purge-ghosts', [
+			'methods' => 'POST',
+			'permission_callback' => static fn() => current_user_can('manage_options'),
+			'callback' => [__CLASS__, 'rest_shares_purge_ghosts'],
+		]);
+	}
+
+	public static function rest_shares_purge_ghosts(WP_REST_Request $request): WP_REST_Response {
+		$limit = min(100, max(1, (int)$request->get_param('limit') ?: 100));
+		$clear_skipped = !empty($request->get_param('clear_skipped'));
+		$metas = [
+			'linkedin' => [self::META_SHARED_AT, self::META_SHARE_URN],
+			'x' => [self::META_X_SHARED_AT, self::META_X_POST_ID, self::META_X_BROWSER_CLAIMED_AT, self::META_X_BROWSER_SKIPPED_AT],
+			'facebook' => [self::META_FB_SHARED_AT, self::META_FB_POST_ID],
+			'instagram' => [self::META_IG_SHARED_AT, self::META_IG_MEDIA_ID, self::META_IG_PERMALINK],
+			'threads' => [self::META_THREADS_SHARED_AT, self::META_THREADS_POST_ID, self::META_THREADS_PERMALINK],
+			'medium' => [self::META_MEDIUM_SHARED_AT, self::META_MEDIUM_POST_ID, self::META_MEDIUM_BROWSER_CLAIMED_AT, self::META_MEDIUM_BROWSER_SKIPPED_AT],
+		];
+		$skip_flags = ['x' => self::META_X_BROWSER_SKIPPED_AT, 'medium' => self::META_MEDIUM_BROWSER_SKIPPED_AT];
+
+		$opt = self::get_options();
+		$post_types = array_values(array_filter((array)($opt['post_type_whitelist'] ?? []))) ?: ['post'];
+		$q = new WP_Query([
+			'post_type' => $post_types,
+			'post_status' => 'publish',
+			'posts_per_page' => $limit,
+			'orderby' => 'date',
+			'order' => 'DESC',
+			'no_found_rows' => true,
+		]);
+
+		$purged = [];
+		$cleared_skipped = 0;
+		foreach ($q->posts as $post) {
+			$published_gmt = (int)get_post_time('G', true, $post);
+			foreach ($metas as $net => $keys) {
+				$shared_at = (int)get_post_meta($post->ID, $keys[0], true);
+				$is_ghost = $shared_at > 0 && $shared_at < ($published_gmt - HOUR_IN_SECONDS);
+				if ($is_ghost) {
+					foreach ($keys as $key) {
+						delete_post_meta($post->ID, $key);
+					}
+					$purged[] = [
+						'id' => (int)$post->ID,
+						'title' => html_entity_decode(wp_strip_all_tags(get_the_title($post)), ENT_QUOTES, get_bloginfo('charset')),
+						'network' => $net,
+						'shared_at' => $shared_at,
+						'published_at' => $published_gmt,
+					];
+				} elseif ($clear_skipped && isset($skip_flags[$net]) && get_post_meta($post->ID, $skip_flags[$net], true)) {
+					delete_post_meta($post->ID, $skip_flags[$net]);
+					$cleared_skipped++;
+				}
+			}
+		}
+		self::debug_log_event('Purge ghosts: ' . count($purged) . ' partage(s) anterieur(s) a la publication, ' . $cleared_skipped . ' skip flag(s) nettoye(s).');
+		return new WP_REST_Response(['purged' => $purged, 'cleared_skipped' => $cleared_skipped], 200);
 	}
 
 	public static function rest_shares_retry(WP_REST_Request $request): WP_REST_Response {
