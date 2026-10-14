@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.09.01
+ * Version: 2026.10.01
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -249,7 +249,8 @@ final class PKLIAP_Plugin {
 			|| defined('RANK_MATH_VERSION')
 			|| defined('SEOPRESS_VERSION')
 			|| defined('AIOSEO_VERSION')
-			|| defined('THE_SEO_FRAMEWORK_VERSION');
+			|| defined('THE_SEO_FRAMEWORK_VERSION')
+			|| defined('PKSEO_LOGO');
 	}
 
 	public static function register_admin_columns(): void {

@@ -112,7 +112,10 @@ Mise à jour live :
 - Après une mise à jour, vérifier la version affichée dans WordPress et tester un partage manuel sur le réseau modifié.
 
 ## 🧾 Changelog
+
+Historique complet : [CHANGELOG.md](CHANGELOG.md).
  
+- `2026.10.01` : évite les balises Open Graph/Twitter dupliquées lorsque PK SEO Head est actif.
 - `2026.09.01` : endpoint REST `POST /shares/purge-ghosts` — détecte et purge les partages enregistrés avant la publication de l'article (articles reprogrammés), nettoie les flags skip des runners X/Medium, et remet tout dans la file de retry.
 - `2026.08.09` : ajoute un lien `Dry-run (ne publie pas)` pour chaque réseau afin de vérifier la configuration et le texte généré avant toute publication réelle.
 - `2026.08.08` : efface l’erreur X historique après une publication réussie via le runner navigateur ; l’interface de langue indique désormais quand aucun provider n’est actif ou quand la langue source détectée empêche la traduction.
@@ -162,6 +165,8 @@ Mise à jour live :
 - `0.73` : publication immédiate Facebook, Instagram et Threads.
 
 ## 🔗 Liens
+
+- Soutenir le projet : [Ko-fi](https://ko-fi.com/pouark)
 
 - EN README : [README_en.md](README_en.md)
 - Runner navigateur X/Medium (ego-browser) : [src/tools/runner/README.md](src/tools/runner/README.md)

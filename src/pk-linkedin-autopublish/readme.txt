@@ -4,7 +4,7 @@ Tags: linkedin, facebook, instagram, threads, medium, x, twitter, social, autopu
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2026.08.09
+Stable tag: 2026.10.01
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram, Threads et Medium lors de la publication.
@@ -43,6 +43,9 @@ Fonctionnalites :
 * Medium necessite un integration token disponible dans les reglages Medium du compte.
 
 == Changelog ==
+
+= 2026.10.01 =
+* Evite les balises Open Graph/Twitter dupliquees quand PK SEO Head est actif.
 
 = 2026.08.09 =
 * Ajout d'un lien Dry-run par reseau pour verifier la configuration et le texte genere sans publier.

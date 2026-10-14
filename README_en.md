@@ -112,6 +112,9 @@ Live update:
 
 ## 🧾 Changelog
 
+Full history: [CHANGELOG.md](CHANGELOG.md).
+
+- `2026.10.01`: avoids duplicate Open Graph/Twitter tags when PK SEO Head is active.
 - `2026.09.01`: REST endpoint `POST /shares/purge-ghosts` — detects and purges shares recorded before the article's publication date (rescheduled posts), clears X/Medium runner skip flags, and puts everything back into the retry queue.
 - `2026.08.09`: adds a `Dry-run (does not publish)` link for each network to validate configuration and generated text before any real publication.
 - `2026.08.08`: clears stale X errors after a successful browser-runner publication; the language UI now warns when no provider is active or when the detected source language prevents translation.
@@ -139,6 +142,8 @@ Live update:
 - `0.73`: immediate publishing for Facebook, Instagram, and Threads.
 
 ## 🔗 Links
+
+- Support the project: [Ko-fi](https://ko-fi.com/pouark)
 
 - FR README: [README.md](README.md)
 - X/Medium browser runner (ego-browser): [src/tools/runner/README.md](src/tools/runner/README.md)
