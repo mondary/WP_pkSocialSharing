@@ -90,6 +90,9 @@ Les fichiers launchd sont pré-configurés dans `~/.local/config/`. Utiliser `sr
 # Voir le statut
 ./src/tools/runner/runnerctl.sh status
 
+# Verifier les partages des 3 derniers jours (LinkedIn, X, Medium)
+./src/tools/runner/runnerctl.sh check
+
 # Suivre les logs en temps réel
 ./src/tools/runner/runnerctl.sh logs
 
@@ -273,6 +276,22 @@ Gestion simple via `src/tools/runner/runnerctl.sh` :
 ./src/tools/runner/runnerctl.sh logs      # Suivre les logs (Ctrl+C pour quitter)
 ./src/tools/runner/runnerctl.sh logs x    # Logs du runner X uniquement
 ./src/tools/runner/runnerctl.sh restart   # Redémarrer les deux runners
+```
+
+### Verification quotidienne (alerte macOS)
+
+Un check automatique tourne chaque jour a 17h30 (`com.pk.sharecheck`), sur les articles
+des 3 derniers jours. Notification macOS uniquement en cas de probleme (partage manquant
+ou aucun article publie). Historique : `~/.local/log/pk-sharecheck.log`.
+
+```bash
+# Installer le check (une seule fois)
+sed "s|__RUNNER_DIR__|$PWD/src/tools/runner|" src/tools/runner/com.pk.sharecheck.plist \
+  > ~/Library/LaunchAgents/com.pk.sharecheck.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.pk.sharecheck.plist
+
+# Lancer manuellement (avec notification si probleme)
+./src/tools/runner/sharecheck.sh
 ```
 
 Logs : `~/.local/log/pk-x-runner.log` et `~/.local/log/pk-medium-runner.log`

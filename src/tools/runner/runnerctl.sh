@@ -104,6 +104,60 @@ else:
     print("Tout est partagé sur LinkedIn, X et Medium. Rien en retard.")
 '
         ;;
+    check)
+        CONFIG="$HOME/.config/pk-x-runner.json"
+        if [[ ! -f "$CONFIG" ]]; then
+            echo "Config introuvable : $CONFIG"
+            exit 1
+        fi
+        WP_URL=$(python3 -c "import json;print(json.load(open('$CONFIG'))['wp_url'])")
+        TOKEN=$(python3 -c "import json;print(json.load(open('$CONFIG'))['runner_token'])")
+        OUT=$(curl -sf -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" \
+            -H "X-PK-Runner-Token: $TOKEN" \
+            "$WP_URL/wp-json/pksocialsharing/v1/shares?limit=15" | python3 -c '
+import json, sys, datetime
+d = json.load(sys.stdin)
+NETS = [("linkedin", "LinkedIn"), ("x", "X"), ("medium", "Medium")]
+now = datetime.datetime.now(datetime.timezone.utc)
+problems, pending = [], []
+count = 0
+for it in d.get("items", []):
+    date = datetime.datetime.fromisoformat(it["date"])
+    if (now - date).total_seconds() > 3 * 86400:
+        continue
+    count += 1
+    day = date.strftime("%d/%m")
+    title = it["title"][:60]
+    missing = [label for key, label in NETS if not int(it["shares"][key]["shared_at"])]
+    if not missing:
+        continue
+    entry = f"  - {title} ({day}) : " + ", ".join(missing)
+    if date.date() == now.date() and now.hour < 17:
+        pending.append(entry)
+    else:
+        problems.append(entry)
+print(f"Articles verifies (3 derniers jours) : {count}")
+if count == 0:
+    print("PROBLEMES (1) :")
+    print("  - Aucun article publie depuis 3 jours (verifier la programmation WordPress)")
+    print("RESULT: PROBLEMES")
+    sys.exit(0)
+if problems:
+    print(f"PROBLEMES ({len(problems)}) :")
+    print("\n".join(problems))
+    print("RESULT: PROBLEMES")
+else:
+    print("Aucun manque sur LinkedIn, X et Medium.")
+    print("RESULT: CHECK OK")
+if pending:
+    print(f"En attente aujourdhui ({len(pending)}) :")
+    print("\n".join(pending))
+') || { echo "Erreur: API partages injoignable"; exit 1; }
+        echo "$OUT"
+        if echo "$OUT" | grep -q "RESULT: PROBLEMES"; then
+            exit 1
+        fi
+        ;;
     logs)
         case "${2:-all}" in
             x) tail -f ~/.local/log/pk-x-runner.log ~/.local/log/pk-x-runner.err 2>/dev/null ;;
@@ -117,7 +171,7 @@ else:
         echo "Kill switch retiré. Utilise '$0 start' pour charger les runners."
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|run-x|run-medium|status|posts [limite]|logs [x|medium|all]|enable}"
+        echo "Usage: $0 {start|stop|restart|run-x|run-medium|status|posts [limite]|check|logs [x|medium|all]|enable}"
         exit 1
         ;;
 esac
