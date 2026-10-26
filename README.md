@@ -115,6 +115,7 @@ Mise à jour live :
 
 Historique complet : [CHANGELOG.md](CHANGELOG.md).
  
+- `2026.10.30` : LinkedIn — image de partage personnalisable par article (`_pkliap_linkedin_image`).
 - `2026.10.29` : LinkedIn — conversion des GIF en JPEG avant upload (grand visuel conservé).
 - `2026.10.28` : X — traduction avec budget de caractères (280, sans troncature) ; LinkedIn — plus de ligne vide avant l'URL.
 - `2026.10.27` : LinkedIn — choix carte cliquable / grande image et presets de disposition du texte.

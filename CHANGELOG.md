@@ -1,5 +1,10 @@
 # Changelog
 
+## [2026.10.30] - 2026-10-26
+
+### Added
+- LinkedIn : image de partage personnalisable par article via la méta `_pkliap_linkedin_image` (ID d'attachment). Utile quand le GIF d'origine n'a aucune frame exploitable (cas ATOMIC AGENT).
+
 ## [2026.10.29] - 2026-10-26
 
 ### Fixed

@@ -114,6 +114,7 @@ Live update:
 
 Full history: [CHANGELOG.md](CHANGELOG.md).
 
+- `2026.10.30`: LinkedIn — per-article share image override (`_pkliap_linkedin_image`).
 - `2026.10.29`: LinkedIn — GIFs converted to JPEG before upload (large visual preserved).
 - `2026.10.28`: X — character-budgeted translation (280, no truncation); LinkedIn — no blank line before the URL.
 - `2026.10.27`: LinkedIn — clickable card / large image choice and text order presets.

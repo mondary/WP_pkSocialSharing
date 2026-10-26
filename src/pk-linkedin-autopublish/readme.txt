@@ -4,7 +4,7 @@ Tags: linkedin, facebook, instagram, threads, medium, x, twitter, social, autopu
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 2026.10.29
+Stable tag: 2026.10.30
 License: GPLv2 or later
 
 Publie automatiquement vos articles WordPress sur LinkedIn, X, Facebook, Instagram, Threads et Medium lors de la publication.
@@ -43,6 +43,9 @@ Fonctionnalites :
 * Medium necessite un integration token disponible dans les reglages Medium du compte.
 
 == Changelog ==
+
+= 2026.10.30 =
+* LinkedIn : image de partage personnalisable par article (_pkliap_linkedin_image), pour les GIF sans frame exploitable.
 
 = 2026.10.29 =
 * LinkedIn : conversion automatique des GIF en JPEG (premiere image) pour conserver un grand visuel.

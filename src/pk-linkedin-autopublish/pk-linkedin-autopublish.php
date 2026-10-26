@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.10.29
+ * Version: 2026.10.30
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -5307,6 +5307,14 @@ final class PKLIAP_Plugin {
 		}
 	}
 
+	private static function linkedin_image_attachment_id(int $post_id): int {
+		$override = (int)get_post_meta($post_id, '_pkliap_linkedin_image', true);
+		if ($override > 0 && wp_attachment_is_image($override)) {
+			return $override;
+		}
+		return (int)get_post_thumbnail_id($post_id);
+	}
+
 	/** @return array|WP_Error */
 	private static function share_post_to_linkedin(int $post_id, bool $force) {
 		$post = get_post($post_id);
@@ -5342,7 +5350,7 @@ final class PKLIAP_Plugin {
 		$media_mode = (string)($opt['media_mode'] ?? 'opengraph');
 
 		$image_urn = '';
-		$thumb_id = get_post_thumbnail_id($post_id);
+		$thumb_id = self::linkedin_image_attachment_id($post_id);
 
 		if ($media_mode === 'upload') {
 			if (!empty($opt['require_image']) && !$thumb_id) {
