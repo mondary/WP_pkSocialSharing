@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026.10.28] - 2026-10-26
+
+### Added
+- X : la traduction Gemini reçoit un budget de caractères calculé pour tenir dans 280 avec le lien ; vérification de la sortie et repli propre, plus de troncature.
+
+### Changed
+- LinkedIn : preset « Texte puis lien » en simple retour à la ligne (plus de ligne vide), template personnalisé synchronisé.
+
 ## [2026.10.27] - 2026-10-26
 
 ### Added

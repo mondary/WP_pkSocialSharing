@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.10.27
+ * Version: 2026.10.28
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -6186,9 +6186,9 @@ final class PKLIAP_Plugin {
 		// Presets de disposition : ils remplacent le template global pour LinkedIn.
 		$preset = (string)($opt['linkedin_text_preset'] ?? '');
 		$presets = [
-			'excerpt_url' => '{excerpt}{br2}{url}',
+			'excerpt_url' => '{excerpt}{br}{url}',
 			'url_excerpt' => '{url}{br}{excerpt}',
-			'title_excerpt_url' => '{title}{br2}{excerpt}{br2}{url}',
+			'title_excerpt_url' => '{title}{br2}{excerpt}{br}{url}',
 			'title_url_excerpt' => '{title}{br2}{url}{br}{excerpt}',
 		];
 		if (isset($presets[$preset])) {
@@ -6205,7 +6205,18 @@ final class PKLIAP_Plugin {
 	}
 
 	private static function build_x_text(int $post_id, array $opt, string $link): string {
-		return self::build_network_text($post_id, $opt, $link, 'x_', 280, 260, (string)($opt['x_share_lang'] ?? ''));
+		$prefix = self::network_opt_string($opt, 'x_prefix', 'prefix');
+		$suffix = self::network_opt_string($opt, 'x_suffix', 'suffix');
+		$template = self::network_opt_string($opt, 'x_text_template', 'text_template');
+		// Budget pour l'extrait traduit : on réserve l'URL, les préfixe/suffixe,
+		// les sauts de ligne et une marge de sécurité. Le but est que le texte
+		// final tienne dans 280 sans passer par la troncature.
+		$reserved = self::mb_length($link) + self::mb_length($prefix) + self::mb_length($suffix) + 12;
+		if (strpos($template, '{title}') !== false) {
+			$reserved += 70;
+		}
+		$budget = max(40, 280 - $reserved);
+		return self::build_network_text($post_id, $opt, $link, 'x_', 280, 260, (string)($opt['x_share_lang'] ?? ''), $budget);
 	}
 
 	private static function build_x_intent_url(int $post_id, array $opt): string {
@@ -6232,14 +6243,14 @@ final class PKLIAP_Plugin {
 		return self::build_network_text($post_id, $opt, $link, '', 500, 260, (string)($opt['threads_share_lang'] ?? ''));
 	}
 
-	private static function build_network_text(int $post_id, array $opt, string $link, string $prefix_key, int $limit, int $excerpt_limit = 260, string $share_lang = ''): string {
+	private static function build_network_text(int $post_id, array $opt, string $link, string $prefix_key, int $limit, int $excerpt_limit = 260, string $share_lang = '', int $max_excerpt_chars = 0): string {
 		$title = wp_strip_all_tags(get_the_title($post_id));
 		$excerpt = self::safe_excerpt($post_id, $excerpt_limit);
 
 		// Traduction si le réseau a une langue cible différente de la source.
 		if ($share_lang !== '') {
 			$title = self::maybe_translate_field($post_id, 'title', $title, $share_lang, $opt);
-			$excerpt = self::maybe_translate_field($post_id, 'excerpt', $excerpt, $share_lang, $opt);
+			$excerpt = self::maybe_translate_field($post_id, 'excerpt', $excerpt, $share_lang, $opt, $max_excerpt_chars);
 		}
 		$template = self::network_opt_string($opt, $prefix_key . 'text_template', 'text_template');
 
@@ -7472,7 +7483,7 @@ final class PKLIAP_Plugin {
 	 * @param array  $opt      Options plugin.
 	 * @return string Texte traduit (ou original en cas d'échec).
 	 */
-	private static function maybe_translate_field(int $post_id, string $field, string $text, string $target_lang, array $opt): string {
+	private static function maybe_translate_field(int $post_id, string $field, string $text, string $target_lang, array $opt, int $max_chars = 0): string {
 		$text = trim($text);
 		if ($text === '' || $target_lang === '') {
 			return $text;
@@ -7489,7 +7500,7 @@ final class PKLIAP_Plugin {
 		// Cache par hash de contenu : si l'article change, sha change, traduction refaite.
 		// Le provider fait partie du hash : un changement de provider invalide
 		// les caches produits par l'ancien (ex: traductions « à moitié » de MyMemory).
-		$hash = hash('sha256', $text . '|' . $provider);
+		$hash = hash('sha256', $text . '|' . $provider . ($max_chars > 0 ? '|max' . $max_chars : ''));
 		$cache = get_post_meta($post_id, self::META_TR_CACHE, true);
 		if (!is_array($cache)) {
 			$cache = [];
@@ -7503,8 +7514,10 @@ final class PKLIAP_Plugin {
 		// traduire, on essaie les suivants (gemini, zai, opencode, deepl, mymemory…).
 		$translated = null;
 		$last_error = null;
+		$fallback_long = '';
 		foreach (self::translation_candidates($provider, $opt) as $candidate) {
-			$res = self::dispatch_translation($text, $source_lang, $target_lang, $candidate, $opt);
+			$extra = $max_chars > 0 ? ['max_chars' => $max_chars] : [];
+			$res = self::dispatch_translation($text, $source_lang, $target_lang, $candidate, $opt, $extra);
 			if (is_wp_error($res)) {
 				$last_error = $res;
 				continue;
@@ -7514,8 +7527,19 @@ final class PKLIAP_Plugin {
 				$last_error = new WP_Error('pkliap_tr_untranslated', 'sortie toujours dans la langue source');
 				continue;
 			}
+			if ($max_chars > 0 && self::mb_length($res) > $max_chars) {
+				if ($fallback_long === '' || self::mb_length($res) < self::mb_length($fallback_long)) {
+					$fallback_long = $res;
+				}
+				$last_error = new WP_Error('pkliap_tr_too_long', 'traduction plus longue que le budget');
+				continue;
+			}
 			$translated = $res;
 			break;
+		}
+		if ($translated === null && $fallback_long !== '') {
+			// Aucun provider n'a respecté le budget : on coupe proprement au mot.
+			$translated = self::mb_truncate($fallback_long, $max_chars);
 		}
 		if ($translated === null) {
 			$msg = $last_error instanceof WP_Error ? $last_error->get_error_message() : 'aucun provider disponible';
@@ -8030,6 +8054,7 @@ final class PKLIAP_Plugin {
 		$llm_extra = [
 			'system_prompt' => (string)($extra['system_prompt'] ?? ''),
 			'max_output_tokens' => (int)($extra['max_output_tokens'] ?? 0),
+			'max_chars' => (int)($extra['max_chars'] ?? 0),
 		];
 		switch ($provider) {
 			case 'deepl':
@@ -8214,8 +8239,13 @@ final class PKLIAP_Plugin {
 		}
 		// Prompt minimal — évite que le modèle reformule et recrache les instructions.
 		$sys_prompt = (string)($cfg['system_prompt'] ?? '');
+		$max_chars = (int)($cfg['max_chars'] ?? 0);
 		if ($sys_prompt === '') {
-			$sys_prompt = 'Translate the text below to language "' . $target . '". Only output the translation, nothing else.';
+			$sys_prompt = 'Translate the text below to language "' . $target . '".';
+			if ($max_chars > 0) {
+				$sys_prompt .= ' The translation MUST be at most ' . $max_chars . ' characters including spaces, to fit in a single tweet. Condense the meaning if needed; never truncate mid-sentence.';
+			}
+			$sys_prompt .= ' Only output the translation, nothing else.';
 		}
 		$max_out = (int)($cfg['max_output_tokens'] ?? 0);
 		if ($format === 'gemini') {

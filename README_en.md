@@ -114,6 +114,7 @@ Live update:
 
 Full history: [CHANGELOG.md](CHANGELOG.md).
 
+- `2026.10.28`: X — character-budgeted translation (280, no truncation); LinkedIn — no blank line before the URL.
 - `2026.10.27`: LinkedIn — clickable card / large image choice and text order presets.
 - `2026.10.26`: LinkedIn — ARTICLE card with explicit thumbnail via `/rest/posts` (the API no longer scrapes Open Graph).
 - `2026.10.25`: LinkedIn — link moved to the end, full post text and clickable Open Graph card.
