@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.10.28
+ * Version: 2026.10.29
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -6501,6 +6501,22 @@ final class PKLIAP_Plugin {
 			$mime = 'image/jpeg';
 		}
 
+		$upload_file = $file;
+		$upload_mime = $mime;
+		$temp_file = '';
+		if ($mime === 'image/gif') {
+			// LinkedIn refuse les GIF : on uploade la première image convertie en JPEG.
+			$editor = wp_get_image_editor($file);
+			if (!is_wp_error($editor)) {
+				$temp_file = wp_tempnam('pk-gif-frame') . '.jpg';
+				$saved = $editor->save($temp_file, 'image/jpeg');
+				if (!is_wp_error($saved) && !empty($saved['path']) && file_exists($saved['path'])) {
+					$upload_file = $saved['path'];
+					$upload_mime = 'image/jpeg';
+				}
+			}
+		}
+
 		$register_payload = [
 			'initializeUploadRequest' => [
 				'owner' => $opt['author_urn'],
@@ -6509,26 +6525,39 @@ final class PKLIAP_Plugin {
 
 		$register = self::linkedin_api_post_versioned('/rest/images?action=initializeUpload', $register_payload, $opt['access_token'], (string)$opt['linkedin_version']);
 		if (is_wp_error($register)) {
+			if ($temp_file !== '') {
+				@unlink($temp_file);
+				if ($upload_file !== $temp_file) { @unlink($upload_file); }
+			}
 			return $register;
 		}
 
 		$image_urn = (string)($register['body']['value']['image'] ?? '');
 		$upload_url = (string)($register['body']['value']['uploadUrl'] ?? '');
 		if (!$image_urn || !$upload_url) {
+			if ($temp_file !== '') {
+				@unlink($temp_file);
+				if ($upload_file !== $temp_file) { @unlink($upload_file); }
+			}
 			return new WP_Error('pkliap_register_upload_failed', 'Impossible de récupérer image/uploadUrl depuis initializeUpload.');
 		}
 
 		$upload_headers = [
 			'Authorization' => 'Bearer ' . $opt['access_token'],
-			'Content-Type' => $mime,
+			'Content-Type' => $upload_mime,
 		];
 
 		$put = wp_remote_request($upload_url, [
 			'method' => 'PUT',
 			'timeout' => 45,
 			'headers' => $upload_headers,
-			'body' => file_get_contents($file),
+			'body' => file_get_contents($upload_file),
 		]);
+
+		if ($temp_file !== '') {
+			@unlink($temp_file);
+			if ($upload_file !== $temp_file) { @unlink($upload_file); }
+		}
 
 		if (is_wp_error($put)) {
 			return $put;

@@ -1,5 +1,10 @@
 # Changelog
 
+## [2026.10.29] - 2026-10-26
+
+### Fixed
+- LinkedIn : les images mises en avant au format GIF sont converties en JPEG (première image) avant upload. LinkedIn refuse les GIF ; le post garde ainsi un grand visuel au lieu d'échouer.
+
 ## [2026.10.28] - 2026-10-26
 
 ### Added
