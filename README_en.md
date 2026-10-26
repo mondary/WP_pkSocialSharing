@@ -114,6 +114,7 @@ Live update:
 
 Full history: [CHANGELOG.md](CHANGELOG.md).
 
+- `2026.10.27`: LinkedIn — clickable card / large image choice and text order presets.
 - `2026.10.26`: LinkedIn — ARTICLE card with explicit thumbnail via `/rest/posts` (the API no longer scrapes Open Graph).
 - `2026.10.25`: LinkedIn — link moved to the end, full post text and clickable Open Graph card.
 - `2026.10.24`: Medium — the browser runner imports a translated page (title + HTML body) in the selected language, English by default, cached per article.

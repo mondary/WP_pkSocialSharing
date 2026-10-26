@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026.10.27] - 2026-10-26
+
+### Added
+- LinkedIn : option explicite « carte ARTICLE cliquable » / « grande image IMAGE non cliquable », avec les limites LinkedIn affichées.
+- LinkedIn : presets de disposition du texte (texte puis lien, lien puis texte, titre + texte + lien, titre + lien + texte).
+
+### Fixed
+- Carte ARTICLE : repli sans vignette si LinkedIn refuse l'image (GIF, traitement échoué) au lieu de bloquer le partage.
+
 ## [2026.10.26] - 2026-10-26
 
 ### Fixed

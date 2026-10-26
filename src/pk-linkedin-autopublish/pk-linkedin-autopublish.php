@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.10.26
+ * Version: 2026.10.27
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -1269,6 +1269,7 @@ final class PKLIAP_Plugin {
 			// "upload" = upload featured image via Images API, puis publication via Posts API.
 			'media_mode' => 'opengraph',
 			'require_image' => 0,
+			'linkedin_text_preset' => '',
 			'last_assets_error' => '',
 			'last_assets_error_at' => 0,
 			'log_enabled' => 1,
@@ -1501,6 +1502,10 @@ final class PKLIAP_Plugin {
 			$out['content_order'] = self::normalize_content_order((string)$current['content_order']);
 		}
 		$out['text_template'] = array_key_exists('text_template', $value) ? sanitize_textarea_field((string)$value['text_template']) : (string)$current['text_template'];
+		$linkedin_text_presets = ['', 'excerpt_url', 'url_excerpt', 'title_excerpt_url', 'title_url_excerpt'];
+		$out['linkedin_text_preset'] = array_key_exists('linkedin_text_preset', $value)
+			? (in_array((string)$value['linkedin_text_preset'], $linkedin_text_presets, true) ? (string)$value['linkedin_text_preset'] : '')
+			: (string)($current['linkedin_text_preset'] ?? '');
 
 		$out['use_wp_shortlink'] = array_key_exists('use_wp_shortlink', $value) ? (empty($value['use_wp_shortlink']) ? 0 : 1) : (int)$current['use_wp_shortlink'];
 		$out['share_on_update'] = array_key_exists('share_on_update', $value) ? (empty($value['share_on_update']) ? 0 : 1) : (int)$current['share_on_update'];
@@ -3305,6 +3310,15 @@ final class PKLIAP_Plugin {
 											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[include_url]" value="1" <?php checked(1, (int)$opt['include_url']); ?>"/>
 											Inclure l’URL
 										</label>
+										<p class="pks-subtitle" style="margin-top:12px;">Disposition du texte</p>
+										<select name="<?php echo esc_attr(self::OPT_KEY); ?>[linkedin_text_preset]">
+											<option value="" <?php selected('', (string)$opt['linkedin_text_preset']); ?>>Personnalisé (template ci-dessous)</option>
+											<option value="excerpt_url" <?php selected('excerpt_url', (string)$opt['linkedin_text_preset']); ?>>Texte puis lien</option>
+											<option value="url_excerpt" <?php selected('url_excerpt', (string)$opt['linkedin_text_preset']); ?>>Lien puis texte</option>
+											<option value="title_excerpt_url" <?php selected('title_excerpt_url', (string)$opt['linkedin_text_preset']); ?>>Titre, texte puis lien</option>
+											<option value="title_url_excerpt" <?php selected('title_url_excerpt', (string)$opt['linkedin_text_preset']); ?>>Titre, lien puis texte</option>
+										</select>
+										<p class="description" style="margin:4px 0 0;">Les presets remplacent le template ci-dessous. « Personnalisé » utilise ton template.</p>
 										<p class="pks-subtitle" style="margin-top:12px;">Langue</p>
 										<?php echo self::render_share_lang_field('linkedin_share_lang', (string)$opt['linkedin_share_lang']); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 										<p class="pks-subtitle" style="margin-top:12px;">Personnalisation</p>
@@ -3332,14 +3346,15 @@ final class PKLIAP_Plugin {
 										<p style="margin:0 0 6px;"><strong>Mode média</strong></p>
 										<label class="pks-inline">
 											<input type="radio" name="<?php echo esc_attr(self::OPT_KEY); ?>[media_mode]" value="opengraph" <?php checked('opengraph', (string)$opt['media_mode']); ?>/>
-											Preview via URL (OpenGraph) — recommandé
+											Carte cliquable (ARTICLE) — recommandé
 										</label>
-										<p class="description" style="margin-top:0;">LinkedIn génère l’image depuis <code>og:image</code> de ton article (pas besoin d’upload API).</p>
+										<p class="description" style="margin-top:0;">Carte avec vignette compacte ; un clic ouvre l’article. LinkedIn impose la taille de la vignette (petite sur desktop).</p>
 										<label class="pks-inline">
 											<input type="radio" name="<?php echo esc_attr(self::OPT_KEY); ?>[media_mode]" value="upload" <?php checked('upload', (string)$opt['media_mode']); ?>/>
-											Upload image mise en avant (Images API)
+											Grande image (IMAGE) — visuel large, non cliquable
 										</label>
-										<p class="description" style="margin-top:0;">Upload via <code>rest/images</code>, puis création du post via <code>rest/posts</code>.</p>
+										<p class="description" style="margin-top:0;">L’image remplit le post ; seul le lien du texte est cliquable.</p>
+										<p class="description" style="margin-top:4px;">LinkedIn ne permet pas une grande carte <em>cliquable</em> : la carte ARTICLE est compacte sur desktop. « Grande image » privilégie le visuel, « Carte cliquable » privilégie le clic.</p>
 										<label class="pks-inline">
 											<input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[require_image]" value="1" <?php checked(1, (int)$opt['require_image']); ?>/>
 											Image obligatoire (si pas d’image/si upload refusé → erreur)
@@ -5393,10 +5408,14 @@ final class PKLIAP_Plugin {
 						'last_assets_error' => $msg,
 						'last_assets_error_at' => time(),
 					]);
-					if (!empty($opt['require_image'])) {
+					$soft_codes = ['pkliap_image_processing_failed', 'pkliap_image_processing_timeout', 'pkliap_upload_failed', 'pkliap_register_upload_failed'];
+					$soft = in_array($image_urn_res->get_error_code(), $soft_codes, true);
+					if (!empty($opt['require_image']) && !$soft) {
 						return $image_urn_res;
 					}
-					$warn_no_image = 'Post publié sans vignette (upload LinkedIn indisponible).';
+					$warn_no_image = $soft
+						? 'Carte publiée sans vignette (image refusée par LinkedIn).'
+						: 'Post publié sans vignette (upload LinkedIn indisponible).';
 				} elseif ($image_urn_res) {
 					$image_urn = (string)$image_urn_res;
 					self::update_options([
@@ -6164,6 +6183,21 @@ final class PKLIAP_Plugin {
 	}
 
 	private static function build_linkedin_text(int $post_id, array $opt, string $link): string {
+		// Presets de disposition : ils remplacent le template global pour LinkedIn.
+		$preset = (string)($opt['linkedin_text_preset'] ?? '');
+		$presets = [
+			'excerpt_url' => '{excerpt}{br2}{url}',
+			'url_excerpt' => '{url}{br}{excerpt}',
+			'title_excerpt_url' => '{title}{br2}{excerpt}{br2}{url}',
+			'title_url_excerpt' => '{title}{br2}{url}{br}{excerpt}',
+		];
+		if (isset($presets[$preset])) {
+			$opt['text_template'] = $presets[$preset];
+			$opt['include_title'] = 1;
+			$opt['include_excerpt'] = 1;
+			$opt['include_url'] = 1;
+		}
+
 		// LinkedIn accepte ~3000 caractères. On laisse de la marge pour l'URL et
 		// les sauts de ligne, et on ne coupe plus l'extrait à 150 caractères :
 		// l'utilisateur voyait une césure au milieu d'une phrase.

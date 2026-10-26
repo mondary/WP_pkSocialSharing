@@ -115,6 +115,7 @@ Mise à jour live :
 
 Historique complet : [CHANGELOG.md](CHANGELOG.md).
  
+- `2026.10.27` : LinkedIn — choix carte cliquable / grande image et presets de disposition du texte.
 - `2026.10.26` : LinkedIn — carte ARTICLE avec vignette explicite via `/rest/posts` (Open Graph plus scrapé par l'API).
 - `2026.10.25` : LinkedIn — lien en fin de post, texte complet et carte Open Graph cliquable.
 - `2026.10.24` : Medium — le runner navigateur importe une page traduite (titre + corps HTML) dans la langue choisie, anglais par défaut, avec cache par article.
