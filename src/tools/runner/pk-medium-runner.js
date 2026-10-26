@@ -86,7 +86,7 @@ async function warmCache(link) {
 	let last = 0;
 	for (let i = 0; i < 3; i++) {
 		try {
-			const res = await fetch(link, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(30000) });
+			const res = await fetch(link, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(360000) });
 			last = res.status;
 			await res.arrayBuffer().catch(() => {});
 			log(`warm cache ${i + 1}/3: HTTP ${res.status}`);
@@ -101,6 +101,7 @@ async function warmCache(link) {
 // Script ego-browser : colle l'URL dans medium.com/p/import, clique Importer,
 // puis Publish si autopublish. Retourne { ok, manual?, medium_post_url?, error? }.
 function mediumScript(next, opts) {
+	const importUrl = next.import_link || next.link;
 	return `
 const task = await useOrCreateTaskSpace('${TASK_SPACE}')
 try {
@@ -113,10 +114,10 @@ try {
 		document.execCommand('selectAll')
 		document.execCommand('delete')
 	})()\`)
-	await typeText(${JSON.stringify(next.link)})
+	await typeText(${JSON.stringify(importUrl)})
 	const typed = await js(String.raw\`(() => {
 		const el = document.querySelector('div[role="textbox"]')
-		return !!(el && (el.textContent || '').includes(${JSON.stringify(next.link)}))
+		return !!(el && (el.textContent || '').includes(${JSON.stringify(importUrl)}))
 	})()\`)
 	if (!typed) throw new Error('URL non insérée dans le champ Medium')
 
@@ -208,9 +209,10 @@ try {
 
 async function processNext(config, next) {
 	const postId = next.post_id;
-	log(`POST #${postId} « ${next.title} » — ${next.link} (moteur ego-browser)`);
+	const importUrl = next.import_link || next.link;
+	log(`POST #${postId} « ${next.title} » — ${next.link}${importUrl !== next.link ? ` (import traduit: ${importUrl})` : ''} (moteur ego-browser)`);
 
-	const warm = await warmCache(next.link);
+	const warm = await warmCache(importUrl);
 	if (warm !== 200) {
 		log(`POST #${postId} ECHEC: article inaccessible (HTTP ${warm}) — claim conservé 15 min.`);
 		await registerFail(config, postId, `article inaccessible HTTP ${warm}`);

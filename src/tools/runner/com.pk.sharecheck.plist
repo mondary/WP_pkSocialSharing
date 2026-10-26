@@ -6,8 +6,8 @@
     <string>com.pk.sharecheck</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/zsh</string>
-        <string>__RUNNER_DIR__/sharecheck.sh</string>
+        <string>/opt/homebrew/bin/node</string>
+        <string>__RUNNER_DIR__/sharecheck.js</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

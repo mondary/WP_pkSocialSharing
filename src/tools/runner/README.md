@@ -245,11 +245,24 @@ Logs : `tail -f /var/log/pk-x-runner.log`
 
 ---
 
+## Rattrapage X
+
+`node src/tools/runner/pk-x-catchup.js` publie au plus `PK_CATCHUP_MAX` articles
+(20 par défaut) avec une pause `PK_PAUSE_MS` (20 s). Chaque tweet est marqué `/done`
+immédiatement après publication : un arrêt du script ne laisse pas de tweets non
+marqués derrière lui.
+
 ## Runner Medium
 
 `pk-medium-runner.js` réutilise ego-browser et ta session Medium (héritée de ton navigateur principal). Il ouvre
-`https://medium.com/p/import`, colle l'URL de l'article WordPress puis clique sur **Importer**.
+`https://medium.com/p/import`, colle l'URL à importer puis clique sur **Importer**.
 Il ne requiert pas l'ancienne API Medium.
+
+Quand une langue est choisie dans `WP Admin > PK SocialSharing > Medium` (anglais par défaut si le champ est vide),
+`/medium-browser/next` renvoie `import_link` : une page signée servie par le plugin, avec le titre et le corps HTML
+traduits. Le runner importe cette page ; les balises et attributs sont préservés, la page déclare l'article français
+en `canonical`, et la traduction est mise en cache par article. En cas d'échec du provider, la page sert le contenu
+original : l'import continue, sans blocage.
 
 1. Dans `WP Admin > PK SocialSharing > Medium > Runner navigateur Medium`, active la queue et génère le token.
 2. Copie `src/tools/runner/medium-config.example.json` vers `~/.config/pk-medium-runner.json`, puis renseigne `wp_url` et `runner_token`.
@@ -284,6 +297,9 @@ Un check automatique tourne chaque jour a 17h30 (`com.pk.sharecheck`), sur les a
 des 3 derniers jours. Notification macOS uniquement en cas de probleme (partage manquant
 ou aucun article publie). Historique : `~/.local/log/pk-sharecheck.log`.
 
+Le plist lance `node`, pas `zsh` : sous launchd, zsh n'a pas acces aux scripts de
+`~/Documents` (TCC), ce qui faisait echouer le check avec `exit 127`.
+
 ```bash
 # Installer le check (une seule fois)
 sed "s|__RUNNER_DIR__|$PWD/src/tools/runner|" src/tools/runner/com.pk.sharecheck.plist \
@@ -291,7 +307,7 @@ sed "s|__RUNNER_DIR__|$PWD/src/tools/runner|" src/tools/runner/com.pk.sharecheck
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.pk.sharecheck.plist
 
 # Lancer manuellement (avec notification si probleme)
-./src/tools/runner/sharecheck.sh
+node src/tools/runner/sharecheck.js
 ```
 
 Logs : `~/.local/log/pk-x-runner.log` et `~/.local/log/pk-medium-runner.log`

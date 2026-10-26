@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.10.01
+ * Version: 2026.10.24
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -503,6 +503,11 @@ final class PKLIAP_Plugin {
 			'permission_callback' => [__CLASS__, 'medium_browser_rest_check'],
 			'callback' => [__CLASS__, 'rest_medium_browser_clear_queue'],
 		]);
+		register_rest_route(self::SYNC_NAMESPACE, '/medium-browser/article', [
+			'methods' => 'GET',
+			'permission_callback' => [__CLASS__, 'medium_browser_article_check'],
+			'callback' => [__CLASS__, 'rest_medium_browser_article'],
+		]);
 	}
 
 	public static function register_shares_routes(): void {
@@ -707,8 +712,21 @@ final class PKLIAP_Plugin {
 			return new WP_REST_Response(['empty' => true, 'reason' => 'queue_empty'], 200);
 		}
 
-		update_post_meta($chosen, self::META_X_BROWSER_CLAIMED_AT, $now);
 		$link = self::get_post_link($chosen, $opt);
+		// Anti-français : si la traduction du tweet a échoué (quota provider épuisé,
+		// erreur API), on ne publie pas — le prochain run retentera. Mieux vaut un
+		// tweet en retard qu'un tweet dans la mauvaise langue.
+		$x_lang = (string)($opt['x_share_lang'] ?? '');
+		$source_lang = self::detect_source_language($opt);
+		if ($x_lang !== '' && $x_lang !== $source_lang) {
+			$x_text = self::build_x_text($chosen, $opt, $link);
+			if (self::looks_untranslated($x_text, $source_lang)) {
+				self::x_browser_record_run('translation_pending');
+				return new WP_REST_Response(['empty' => true, 'reason' => 'translation_pending'], 200);
+			}
+		}
+
+		update_post_meta($chosen, self::META_X_BROWSER_CLAIMED_AT, $now);
 		self::x_browser_record_run('claimed');
 
 		return new WP_REST_Response([
@@ -882,7 +900,99 @@ final class PKLIAP_Plugin {
 		}
 		update_post_meta($chosen, self::META_MEDIUM_BROWSER_CLAIMED_AT, $now);
 		self::medium_browser_record_run('claimed');
-		return new WP_REST_Response(['empty' => false, 'post_id' => $chosen, 'title' => wp_strip_all_tags(get_the_title($chosen)), 'link' => self::get_post_link($chosen, $opt), 'import_url' => 'https://medium.com/p/import', 'autoclick' => !empty($opt['medium_browser_autoclick'])], 200);
+		$link = self::get_post_link($chosen, $opt);
+		$translate_lang = (string)($opt['medium_share_lang'] ?? '');
+		if ($translate_lang === '') {
+			// Le runner navigateur importe l'article complet : anglais par défaut.
+			$translate_lang = 'en';
+		}
+		$import_link = $link;
+		$provider = (string)($opt['translate_provider'] ?? 'none');
+		$token = (string)($opt['medium_browser_runner_token'] ?? '');
+		if ($provider !== 'none' && $token !== '' && $translate_lang !== self::detect_source_language($opt)) {
+			$sig = hash_hmac('sha256', $chosen . '|' . $translate_lang, $token);
+			$import_link = add_query_arg([
+				'post_id' => $chosen,
+				'lang' => $translate_lang,
+				'sig' => $sig,
+			], rest_url(self::SYNC_NAMESPACE . '/medium-browser/article'));
+		}
+		return new WP_REST_Response([
+			'empty' => false,
+			'post_id' => $chosen,
+			'title' => wp_strip_all_tags(get_the_title($chosen)),
+			'link' => $link,
+			'import_link' => $import_link,
+			'translate_lang' => $translate_lang,
+			'import_url' => 'https://medium.com/p/import',
+			'autoclick' => !empty($opt['medium_browser_autoclick']),
+		], 200);
+	}
+
+	/**
+	 * Le crawler Medium ne peut pas envoyer le header runner : on signe l'URL
+	 * (HMAC du post + langue avec le token runner) et on la valide ici.
+	 */
+	public static function medium_browser_article_check(WP_REST_Request $request): bool {
+		$opt = self::get_options();
+		if (empty($opt['medium_browser_enabled'])) {
+			return false;
+		}
+		$token = (string)($opt['medium_browser_runner_token'] ?? '');
+		$post_id = (int)$request->get_param('post_id');
+		$lang = sanitize_key((string)$request->get_param('lang'));
+		$sig = (string)$request->get_param('sig');
+		if ($token === '' || $post_id <= 0 || $lang === '' || $sig === '') {
+			return false;
+		}
+		return hash_equals(hash_hmac('sha256', $post_id . '|' . $lang, $token), $sig);
+	}
+
+	public static function rest_medium_browser_article(WP_REST_Request $request) {
+		$post_id = (int)$request->get_param('post_id');
+		$lang = sanitize_key((string)$request->get_param('lang'));
+		$post = get_post($post_id);
+		if (!$post || $post->post_status !== 'publish') {
+			return new WP_Error('pkliap_medium_article_404', 'Article introuvable.', ['status' => 404]);
+		}
+		$opt = self::get_options();
+		$post_types = array_values(array_filter((array)($opt['post_type_whitelist'] ?? []))) ?: ['post'];
+		if (!in_array($post->post_type, $post_types, true)) {
+			return new WP_Error('pkliap_medium_article_type', 'Type de contenu non autorisé.', ['status' => 404]);
+		}
+
+		// La traduction peut prendre plusieurs dizaines de secondes : on ne coupe pas
+		// la requête si le premier fetch (warm cache) abandonne côté runner.
+		ignore_user_abort(true);
+		@set_time_limit(240);
+
+		$title = html_entity_decode(wp_strip_all_tags(get_the_title($post)), ENT_QUOTES, get_bloginfo('charset'));
+		$translated_title = self::maybe_translate_field($post_id, 'title', $title, $lang, $opt);
+		$content = apply_filters('the_content', $post->post_content);
+		$content = is_string($content) ? $content : '';
+		$translated_content = self::maybe_translate_html($post_id, 'medium_html', $content, $lang, $opt);
+		$canonical = self::get_post_link($post_id, $opt);
+		$charset = get_bloginfo('charset');
+
+		$html = '<!doctype html><html lang="' . esc_attr($lang) . '"><head>'
+			. '<meta charset="' . esc_attr($charset) . '">'
+			. '<meta name="robots" content="noindex, nofollow">'
+			. '<title>' . esc_html($translated_title) . '</title>'
+			. '<link rel="canonical" href="' . esc_url($canonical) . '">'
+			. '<meta property="og:title" content="' . esc_attr($translated_title) . '">'
+			. '<meta property="og:url" content="' . esc_url($canonical) . '">'
+			. '</head><body><article><h1>' . esc_html($translated_title) . '</h1>'
+			. $translated_content
+			. '</article></body></html>';
+
+		if (!headers_sent()) {
+			header('Content-Type: text/html; charset=' . $charset);
+			header('X-Robots-Tag: noindex, nofollow', true);
+			nocache_headers();
+		}
+		do_action('litespeed_control_set_nocache', 'pksocialsharing medium translated article');
+		echo $html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- HTML déjà rendu/sanitizé.
+		exit;
 	}
 
 	public static function rest_medium_browser_done(WP_REST_Request $request): WP_REST_Response {
@@ -1291,7 +1401,26 @@ final class PKLIAP_Plugin {
 	}
 
 	public static function update_options(array $new): void {
-		update_option(self::OPT_KEY, array_merge(self::get_options(), $new));
+		global $wpdb;
+		$lock = 'pkliap_opt_' . md5((defined('DB_NAME') ? DB_NAME : 'wp') . ':' . get_current_blog_id());
+		$acquired = false;
+		if (isset($wpdb) && is_object($wpdb) && method_exists($wpdb, 'get_var')) {
+			$acquired = (int)$wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 10)', $lock)) === 1;
+		}
+		try {
+			if ($acquired) {
+				// Relit l'option sous verrou : les runners X/Medium écrivent en
+				// parallèle (statuts, compteurs) et un read-modify-write non
+				// sérialisé perdait des mises à jour.
+				wp_cache_delete(self::OPT_KEY, 'options');
+				wp_cache_delete('alloptions', 'options');
+			}
+			update_option(self::OPT_KEY, array_merge(self::get_options(), $new));
+		} finally {
+			if ($acquired) {
+				$wpdb->query($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock));
+			}
+		}
 	}
 
 	private static function set_tokens(array $data): void {
@@ -2835,9 +2964,9 @@ final class PKLIAP_Plugin {
 							</select>
 						</label>
 						<div class="pks-subbox" style="margin-top:12px;">
-							<p class="pks-subtitle">Langue du titre</p>
+							<p class="pks-subtitle">Langue de l’article importé</p>
 							<?php echo self::render_share_lang_field('medium_share_lang', (string)$opt['medium_share_lang']); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-							<p class="description" style="margin-top:6px;"><em>Note Medium : seul le titre est traduit en v1, le corps HTML reste dans la langue originale.</em></p>
+							<p class="description" style="margin-top:6px;"><em>Le runner navigateur importe une page traduite (titre + corps HTML) dans cette langue. Si aucune langue n’est choisie, l’anglais est utilisé par défaut. La traduction du corps nécessite un provider LLM ou DeepL.</em></p>
 						</div>
 							<?php if (!empty($opt['last_medium_error'])): ?>
 								<p class="description" style="color:#b32d2e;">Dernière erreur Medium: <?php echo esc_html((string)$opt['last_medium_error']); ?></p>
@@ -7232,7 +7361,9 @@ final class PKLIAP_Plugin {
 		}
 
 		// Cache par hash de contenu : si l'article change, sha change, traduction refaite.
-		$hash = hash('sha256', $text);
+		// Le provider fait partie du hash : un changement de provider invalide
+		// les caches produits par l'ancien (ex: traductions « à moitié » de MyMemory).
+		$hash = hash('sha256', $text . '|' . $provider);
 		$cache = get_post_meta($post_id, self::META_TR_CACHE, true);
 		if (!is_array($cache)) {
 			$cache = [];
@@ -7242,19 +7373,33 @@ final class PKLIAP_Plugin {
 			return (string)($cached_entry['text'] ?? $text);
 		}
 
-		$translated = self::dispatch_translation($text, $source_lang, $target_lang, $provider, $opt);
-		if (is_wp_error($translated)) {
-			$msg = $translated->get_error_message();
+		// Repli multi-provider : si le provider actif échoue ou « traduit » sans
+		// traduire, on essaie les suivants (gemini, zai, opencode, deepl, mymemory…).
+		$translated = null;
+		$last_error = null;
+		foreach (self::translation_candidates($provider, $opt) as $candidate) {
+			$res = self::dispatch_translation($text, $source_lang, $target_lang, $candidate, $opt);
+			if (is_wp_error($res)) {
+				$last_error = $res;
+				continue;
+			}
+			$res = trim((string)$res);
+			if ($res === '' || self::looks_untranslated($res, $source_lang)) {
+				$last_error = new WP_Error('pkliap_tr_untranslated', 'sortie toujours dans la langue source');
+				continue;
+			}
+			$translated = $res;
+			break;
+		}
+		if ($translated === null) {
+			$msg = $last_error instanceof WP_Error ? $last_error->get_error_message() : 'aucun provider disponible';
 			self::update_options([
 				'last_translate_error' => '[' . $provider . '] ' . $msg,
 				'last_translate_error_at' => time(),
 			]);
 			self::debug_log_event("Translation failed ({$provider}, {$source_lang}→{$target_lang}): {$msg}");
-			return $text; // fallback non bloquant
-		}
-
-		$translated = trim($translated);
-		if ($translated === '') {
+			// On renvoie l'original : le garde-fou de /x-browser/next bloquera alors
+			// la publication plutôt que de tweeter dans la mauvaise langue.
 			return $text;
 		}
 
@@ -7265,14 +7410,504 @@ final class PKLIAP_Plugin {
 	}
 
 	/**
+	 * Traduit le corps HTML complet d'un article pour l'import Medium.
+	 * Met en cache par hash de contenu, avec verrou pour éviter deux traductions
+	 * concurrentes (le runner warm-cache la page plusieurs fois).
+	 *
+	 * @return string HTML traduit, ou original en cas d'échec.
+	 */
+	private static function maybe_translate_html(int $post_id, string $field, string $html, string $target_lang, array $opt): string {
+		$html = trim($html);
+		if ($html === '' || $target_lang === '') {
+			return $html;
+		}
+		$provider = (string)($opt['translate_provider'] ?? 'none');
+		if ($provider === 'none') {
+			return $html;
+		}
+		$source_lang = self::detect_source_language($opt);
+		if ($target_lang === $source_lang) {
+			return $html;
+		}
+		if (get_transient('pkliap_medium_html_down')) {
+			return $html;
+		}
+
+		// Même structure avant/après : on retire les éléments que wp_kses_post
+		// supprimerait de toute façon, pour ne pas rejeter une bonne traduction.
+		$html = wp_kses_post($html);
+		$hash = hash('sha256', $html . '|' . $provider . '|v7');
+		$cache = get_post_meta($post_id, self::META_TR_CACHE, true);
+		if (!is_array($cache)) {
+			$cache = [];
+		}
+		$cached = $cache[$target_lang][$field] ?? null;
+		if (is_array($cached) && ($cached['hash'] ?? '') === $hash) {
+			return (string)($cached['text'] ?? $html);
+		}
+
+		$lock_key = 'pkliap_medium_tr_' . $post_id . '_' . $target_lang;
+		$lock_time = (int)get_option($lock_key, 0);
+		if ($lock_time > 0 && (time() - $lock_time) > 180) {
+			delete_option($lock_key);
+		}
+		if (!add_option($lock_key, time(), '', false)) {
+			// Une autre requête traduit déjà : on attend le cache plutôt que de
+			// servir le français au crawler Medium.
+			$deadline = time() + 180;
+			while (time() < $deadline) {
+				usleep(500000);
+				$cache = get_post_meta($post_id, self::META_TR_CACHE, true);
+				$cached = is_array($cache) ? ($cache[$target_lang][$field] ?? null) : null;
+				if (is_array($cached) && ($cached['hash'] ?? '') === $hash) {
+					return (string)($cached['text'] ?? $html);
+				}
+				if (!get_option($lock_key)) {
+					break;
+				}
+			}
+			return $html;
+		}
+
+		try {
+			$translated = self::translate_html($html, $source_lang, $target_lang, $provider, $opt);
+			if (is_wp_error($translated)) {
+				set_transient('pkliap_medium_html_down', 1, HOUR_IN_SECONDS);
+				self::debug_log_event('Medium HTML translation failed (' . $provider . ', ' . $source_lang . '→' . $target_lang . '): ' . $translated->get_error_message());
+				return $html;
+			}
+			$translated = wp_kses_post(trim($translated));
+			if ($translated === '' || self::html_tag_signature($html) !== self::html_tag_signature($translated)) {
+				set_transient('pkliap_medium_html_down', 1, HOUR_IN_SECONDS);
+				self::debug_log_event('Medium HTML translation rejected: structure HTML différente.');
+				return $html;
+			}
+			delete_transient('pkliap_medium_html_down');
+			$cache[$target_lang][$field] = ['hash' => $hash, 'text' => $translated, 'ts' => time()];
+			update_post_meta($post_id, self::META_TR_CACHE, $cache);
+			return $translated;
+		} finally {
+			delete_option($lock_key);
+		}
+	}
+
+	/**
+	 * @return string|WP_Error
+	 */
+	private static function translate_html(string $html, string $source, string $target, string $provider, array $opt) {
+		foreach (self::translation_candidates($provider, $opt) as $candidate) {
+			$result = self::translate_html_once($html, $source, $target, $candidate, $opt);
+			if (is_wp_error($result)) {
+				self::debug_log_event('Medium HTML provider ' . $candidate . ' failed: ' . $result->get_error_message());
+				continue;
+			}
+			if (self::looks_untranslated(wp_strip_all_tags($result), $source)) {
+				self::debug_log_event('Medium HTML provider ' . $candidate . ' returned untranslated text, trying next.');
+				continue;
+			}
+			return $result;
+		}
+		return new WP_Error('pkliap_tr_html_failed', 'Aucun provider n’a produit une traduction HTML complète.');
+	}
+
+	/**
+	 * Ordre de repli pour la traduction : le provider actif (sauf MyMemory qui est
+	 * en dernier à cause de ses quotas), puis les providers ayant des identifiants,
+	 * puis MyMemory en dernier recours.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function translation_candidates(string $provider, array $opt): array {
+		$candidates = [];
+		$add = static function (string $p) use (&$candidates): void {
+			if ($p !== '' && $p !== 'none' && !in_array($p, $candidates, true)) {
+				$candidates[] = $p;
+			}
+		};
+		if ($provider !== 'mymemory') {
+			$add($provider);
+		}
+		if (!empty($opt['translate_gemini_key'])) {
+			$add('gemini');
+		}
+		if (!empty($opt['translate_zai_key'])) {
+			$add('zai_glm');
+		}
+		if (!empty($opt['translate_opencode_key'])) {
+			$add('opencode');
+		}
+		if (!empty($opt['translate_deepl_key'])) {
+			$add('deepl');
+		}
+		if (!empty($opt['translate_openai_compat_model'])) {
+			$add('openai_compat');
+		}
+		$add('mymemory');
+		return $candidates;
+	}
+
+	/**
+	 * @return string|WP_Error
+	 */
+	private static function translate_html_once(string $html, string $source, string $target, string $provider, array $opt) {
+		switch ($provider) {
+			case 'deepl':
+				return self::translate_via_deepl($html, $source, $target, $opt, true);
+			case 'opencode':
+			case 'openai_compat':
+			case 'gemini':
+			case 'zai_glm':
+				return self::translate_html_via_llm($html, $source, $target, $provider, $opt);
+			case 'mymemory':
+			case 'apple_native':
+				return self::translate_html_by_segments($html, $source, $target, $provider, $opt);
+			default:
+				return $html;
+		}
+	}
+
+	/**
+	 * Traduction HTML via LLM : on demande de conserver les balises et on vérifie
+	 * ensuite la signature des balises avant d'accepter la sortie.
+	 *
+	 * @return string|WP_Error
+	 */
+	private static function translate_html_via_llm(string $html, string $source, string $target, string $provider, array $opt) {
+		$parts = preg_split('/(<[^>]*>)/', $html, -1, PREG_SPLIT_DELIM_CAPTURE);
+		if (!is_array($parts)) {
+			return new WP_Error('pkliap_tr_html_split', 'Découpage HTML impossible.');
+		}
+		$segments = [];
+		$tokens = [];
+		$protected = 0;
+		foreach ($parts as $part) {
+			if ($part === '') {
+				continue;
+			}
+			if ($part[0] === '<') {
+				if (preg_match('/^<\s*(pre|code|script|style)\b/i', $part)) {
+					$protected++;
+				} elseif (preg_match('/^<\s*\/\s*(pre|code|script|style)\b/i', $part)) {
+					$protected = max(0, $protected - 1);
+				}
+				$tokens[] = ['t' => 'tag', 'v' => $part];
+				continue;
+			}
+			if ($protected > 0 || !preg_match('/^(\s*)(.*?)(\s*)$/s', $part, $m) || $m[2] === '') {
+				$tokens[] = ['t' => 'raw', 'v' => $part];
+				continue;
+			}
+			$idx = count($segments);
+			$segments[$idx] = $m[2];
+			$tokens[] = ['t' => 'seg', 'i' => $idx, 'lead' => $m[1], 'trail' => $m[3]];
+		}
+		if (!$segments) {
+			return $html;
+		}
+		// Lots de ~1800 caractères pour les modèles faibles (ils tronquent leur
+		// sortie) ; Gemini 3.x supporte des lots plus gros, ce qui évite les
+		// limites RPM et les timeouts du premier warm-cache.
+		$batch_limit = ($provider === 'gemini') ? 6000 : 1800;
+		$batches = [];
+		$current = [];
+		$current_len = 0;
+		foreach (array_keys($segments) as $i) {
+			$len = strlen($segments[$i]) + 16;
+			if ($current && ($current_len + $len) > $batch_limit) {
+				$batches[] = $current;
+				$current = [];
+				$current_len = 0;
+			}
+			$current[] = $i;
+			$current_len += $len;
+		}
+		if ($current) {
+			$batches[] = $current;
+		}
+
+		$prompt = 'You are a translation engine. Translate each segment below to language "' . $target . '". '
+			. 'Each segment starts with a marker like @@PK0@@. Keep every marker exactly as-is, once, in the same order. '
+			. 'Translate only the text after its marker. Do not translate code, URLs or product identifiers. '
+			. 'Do not merge, split, reorder or omit segments. Output only the marked segments.';
+		$map = [];
+		$retries = 0;
+		foreach ($batches as $batch) {
+			$payload = '';
+			foreach ($batch as $i) {
+				$payload .= '@@PK' . $i . '@@' . $segments[$i] . "\n";
+			}
+			$max_tokens = max(1024, min(8192, (int)ceil(strlen($payload) * 1.5)));
+			$translated = self::dispatch_translation($payload, $source, $target, $provider, $opt, [
+				'system_prompt' => $prompt,
+				'max_output_tokens' => $max_tokens,
+			]);
+			if (is_wp_error($translated)) {
+				self::debug_log_event('Medium HTML batch failed: ' . $translated->get_error_message());
+				continue;
+			}
+			$parsed = self::parse_marked_segments(self::strip_code_fences(trim($translated)), $batch);
+			$parsed_ok = is_array($parsed);
+			if (!$parsed_ok) {
+				$parsed = [];
+			}
+			foreach ($batch as $i) {
+				$orig = $segments[$i];
+				$candidate = isset($parsed[$i]) ? trim((string)$parsed[$i]) : '';
+				$bad = $candidate === ''
+					|| (strlen($orig) > 80 && strlen($candidate) < strlen($orig) * 0.45)
+					|| self::looks_untranslated($candidate, $source);
+				if ($bad) {
+					$candidate = '';
+					if ($retries < 24) {
+						$retries++;
+						$retry = self::dispatch_translation($orig, $source, $target, $provider, $opt);
+						if (!is_wp_error($retry)) {
+							$retry = trim((string)$retry);
+							if ($retry !== '' && !self::looks_untranslated($retry, $source)) {
+								$candidate = $retry;
+							}
+						}
+					}
+				}
+				if ($candidate !== '') {
+					$map[$i] = $candidate;
+				}
+			}
+		}
+
+		$out = '';
+		foreach ($tokens as $tok) {
+			if ($tok['t'] !== 'seg') {
+				$out .= $tok['v'];
+				continue;
+			}
+			$i = (int)$tok['i'];
+			$out .= $tok['lead'] . ($map[$i] ?? $segments[$i]) . $tok['trail'];
+		}
+		return $out;
+	}
+
+	/**
+	 * Extrait les segments balisés @@PKn@@ renvoyés par le modèle.
+	 * Renvoie null si les marqueurs sont absents, dupliqués ou désordonnés.
+	 *
+	 * @param int[] $expected
+	 * @return array<int,string>|null
+	 */
+	private static function parse_marked_segments(string $text, array $expected): ?array {
+		if (!preg_match_all('/@@PK(\d+)@@/', $text, $m, PREG_OFFSET_CAPTURE)) {
+			return null;
+		}
+		$allowed = array_fill_keys(array_map('intval', $expected), true);
+		$positions = [];
+		$map = [];
+		foreach ($m[0] as $k => $match) {
+			$idx = (int)$m[1][$k][0];
+			if (!isset($allowed[$idx]) || isset($map[$idx])) {
+				return null;
+			}
+			$map[$idx] = '';
+			$positions[] = ['idx' => $idx, 'start' => $match[1], 'end' => $match[1] + strlen($match[0])];
+		}
+		$last = -1;
+		foreach ($positions as $p) {
+			if ($p['idx'] <= $last) {
+				return null;
+			}
+			$last = $p['idx'];
+		}
+		$total = count($positions);
+		for ($k = 0; $k < $total; $k++) {
+			$start = $positions[$k]['end'];
+			$end = $k + 1 < $total ? $positions[$k + 1]['start'] : strlen($text);
+			$map[$positions[$k]['idx']] = trim(substr($text, $start, $end - $start));
+		}
+		return $map;
+	}
+
+	private static function looks_untranslated(string $text, string $source): bool {
+		if (strpos($source, 'fr') !== 0) {
+			return false;
+		}
+		// Les URLs sont ignorées : un slug français dans l'adresse de l'article
+		// ferait passer une traduction réussie pour du texte non traduit.
+		$text = (string)preg_replace('#https?://\S+#iu', ' ', $text);
+		$lower = function_exists('mb_strtolower') ? mb_strtolower($text) : strtolower($text);
+		$words = preg_split('/[^\p{L}\']+/u', $lower, -1, PREG_SPLIT_NO_EMPTY);
+		if (!is_array($words) || count($words) < 8) {
+			return false;
+		}
+		$stop = ['le', 'la', 'les', 'des', 'une', 'est', 'sur', 'dans', 'pour', 'qui', 'avec', 'au', 'aux', 'du', 'ce', 'cette', 'ces', 'il', 'elle', 'nous', 'vous', 'ils', 'elles', 'pas', 'plus', 'mais', 'donc', 'être', 'avoir', 'fait', 'comme', 'tout', 'sans', 'sous', 'entre', 'vers', 'chez', 'lors', 'déjà', 'encore', 'très', 'bien'];
+		$count = 0;
+		foreach ($words as $w) {
+			if (in_array($w, $stop, true)) {
+				$count++;
+			}
+		}
+		return ($count / count($words)) > 0.06;
+	}
+
+	/**
+	 * Fallback pour les providers sans mode HTML (MyMemory, Apple natif) :
+	 * on traduit chaque nœud texte, balises et attributs restent intacts.
+	 *
+	 * @return string|WP_Error
+	 */
+	private static function translate_html_by_segments(string $html, string $source, string $target, string $provider, array $opt) {
+		$parts = preg_split('/(<[^>]*>)/', $html, -1, PREG_SPLIT_DELIM_CAPTURE);
+		if (!is_array($parts)) {
+			return new WP_Error('pkliap_tr_html_split', 'Découpage HTML impossible.');
+		}
+		$protected = 0;
+		$out = '';
+		$calls = 0;
+		foreach ($parts as $part) {
+			if ($part === '') {
+				continue;
+			}
+			if ($part[0] === '<') {
+				if (preg_match('/^<\s*(pre|code|script|style)\b/i', $part)) {
+					$protected++;
+				} elseif (preg_match('/^<\s*\/\s*(pre|code|script|style)\b/i', $part)) {
+					$protected = max(0, $protected - 1);
+				}
+				$out .= $part;
+				continue;
+			}
+			if ($protected > 0 || !preg_match('/^(\s*)(.*?)(\s*)$/s', $part, $m) || $m[2] === '') {
+				$out .= $part;
+				continue;
+			}
+			$text = $m[2];
+			if ($provider === 'mymemory') {
+				$translated = self::translate_mymemory_chunks($text, $source, $target, $opt);
+				if ($translated === '' || self::looks_untranslated($translated, $source)) {
+					$out .= $part;
+					continue;
+				}
+				$out .= $m[1] . $translated . $m[3];
+				continue;
+			}
+			if ($calls >= 60) {
+				$out .= $part;
+				continue;
+			}
+			$calls++;
+			$translated = self::dispatch_translation($text, $source, $target, $provider, $opt);
+			if (is_wp_error($translated) || trim((string)$translated) === '') {
+				$out .= $part;
+				continue;
+			}
+			$out .= $m[1] . trim((string)$translated) . $m[3];
+		}
+		return $out;
+	}
+
+	/**
+	 * MyMemory limite chaque requête à ~500 octets : on découpe le texte aux
+	 * frontières de phrases/mots et on recolle les traductions.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function split_text_chunks(string $text, int $max = 450): array {
+		$text = trim($text);
+		if ($text === '') {
+			return [];
+		}
+		$sentences = preg_split('/(?<=[.!?…])\s+/u', $text, -1, PREG_SPLIT_NO_EMPTY);
+		if (!is_array($sentences) || !$sentences) {
+			$sentences = [$text];
+		}
+		$chunks = [];
+		$current = '';
+		foreach ($sentences as $sentence) {
+			$candidate = $current === '' ? $sentence : $current . ' ' . $sentence;
+			if (strlen($candidate) <= $max) {
+				$current = $candidate;
+				continue;
+			}
+			if ($current !== '') {
+				$chunks[] = $current;
+				$current = '';
+			}
+			if (strlen($sentence) <= $max) {
+				$current = $sentence;
+				continue;
+			}
+			$words = preg_split('/\s+/u', $sentence, -1, PREG_SPLIT_NO_EMPTY);
+			$line = '';
+			foreach ((array)$words as $word) {
+				$candidate = $line === '' ? $word : $line . ' ' . $word;
+				if (strlen($candidate) <= $max) {
+					$line = $candidate;
+					continue;
+				}
+				if ($line !== '') {
+					$chunks[] = $line;
+				}
+				$line = $word;
+			}
+			if ($line !== '') {
+				$current = $line;
+			}
+		}
+		if ($current !== '') {
+			$chunks[] = $current;
+		}
+		return $chunks;
+	}
+
+	private static function translate_mymemory_chunks(string $text, string $source, string $target, array $opt): string {
+		$chunks = self::split_text_chunks($text, 450);
+		if (!$chunks) {
+			return $text;
+		}
+		$out = [];
+		$deadline = time() + 160;
+		foreach ($chunks as $chunk) {
+			if (time() > $deadline) {
+				$out[] = $chunk;
+				continue;
+			}
+			$translated = self::translate_via_mymemory($chunk, $source, $target, $opt);
+			if (is_wp_error($translated)) {
+				usleep(800000);
+				$translated = self::translate_via_mymemory($chunk, $source, $target, $opt);
+			}
+			$out[] = is_wp_error($translated) ? $chunk : trim((string)$translated);
+			usleep(300000);
+		}
+		return implode(' ', $out);
+	}
+
+	private static function strip_code_fences(string $text): string {
+		$text = trim($text);
+		if (preg_match('/^```(?:html)?\s*(.*?)\s*```$/is', $text, $m)) {
+			return trim($m[1]);
+		}
+		return $text;
+	}
+
+	private static function html_tag_signature(string $html): string {
+		if (!preg_match_all('/<\s*\/?\s*([a-zA-Z][a-zA-Z0-9:-]*)\b/', $html, $m)) {
+			return '';
+		}
+		return implode(',', array_map('strtolower', $m[1]));
+	}
+
+	/**
 	 * Dispatcher vers le bon adapter selon le provider.
 	 *
 	 * @return string|WP_Error
 	 */
-	private static function dispatch_translation(string $text, string $source, string $target, string $provider, array $opt) {
+	private static function dispatch_translation(string $text, string $source, string $target, string $provider, array $opt, array $extra = []) {
+		$llm_extra = [
+			'system_prompt' => (string)($extra['system_prompt'] ?? ''),
+			'max_output_tokens' => (int)($extra['max_output_tokens'] ?? 0),
+		];
 		switch ($provider) {
 			case 'deepl':
-				return self::translate_via_deepl($text, $source, $target, $opt);
+				return self::translate_via_deepl($text, $source, $target, $opt, !empty($extra['html']));
 			case 'mymemory':
 				return self::translate_via_mymemory($text, $source, $target, $opt);
 			case 'gemini':
@@ -7283,14 +7918,14 @@ final class PKLIAP_Plugin {
 					'key' => '',
 					'model' => '',
 					'format' => 'gemini',
-				], $opt);
+				] + $llm_extra, $opt);
 			case 'zai_glm':
 				return self::translate_via_openai_compat($text, $source, $target, [
 					'endpoint' => rtrim((string)($opt['translate_zai_endpoint'] ?? 'https://open.bigmodel.cn/api/paas/v4'), '/') . '/chat/completions',
 					'key' => (string)($opt['translate_zai_key'] ?? ''),
 					'model' => (string)($opt['translate_zai_model'] ?? 'glm-4-flash'),
 					'format' => 'openai',
-				], $opt);
+				] + $llm_extra, $opt);
 			case 'opencode':
 				$oc_base = rtrim((string)($opt['translate_opencode_endpoint'] ?? ''), '/');
 				if ($oc_base === '') {
@@ -7313,7 +7948,7 @@ final class PKLIAP_Plugin {
 						'key' => (string)($opt['translate_opencode_key'] ?? ''),
 						'model' => $model,
 						'format' => 'openai',
-					], $opt);
+					] + $llm_extra, $opt);
 					if (!is_wp_error($result)) {
 						return $result;
 					}
@@ -7330,7 +7965,7 @@ final class PKLIAP_Plugin {
 					'key' => (string)($opt['translate_openai_compat_key'] ?? ''),
 					'model' => (string)($opt['translate_openai_compat_model'] ?? ''),
 					'format' => 'openai',
-				], $opt);
+				] + $llm_extra, $opt);
 			case 'apple_native':
 				return self::translate_via_apple_native($text, $source, $target, $opt);
 			case 'none':
@@ -7345,7 +7980,7 @@ final class PKLIAP_Plugin {
 	 *
 	 * @return string|WP_Error
 	 */
-	private static function translate_via_deepl(string $text, string $source, string $target, array $opt) {
+	private static function translate_via_deepl(string $text, string $source, string $target, array $opt, bool $html = false) {
 		$key = trim((string)($opt['translate_deepl_key'] ?? ''));
 		if ($key === '') {
 			return new WP_Error('pkliap_tr_deepl_nokey', 'DeepL : clé API manquante.');
@@ -7356,17 +7991,23 @@ final class PKLIAP_Plugin {
 		}
 		$host = !empty($opt['translate_deepl_free']) ? 'https://api-free.deepl.com' : 'https://api.deepl.com';
 
+		$payload = [
+			'text' => $text,
+			'source_lang' => strtoupper($source),
+			'target_lang' => strtoupper($target),
+		];
+		if ($html) {
+			$payload['tag_handling'] = 'html';
+			$payload['preserve_formatting'] = '1';
+		}
+
 		$res = wp_remote_post($host . '/v2/translate', [
-			'timeout' => 20,
+			'timeout' => 60,
 			'headers' => [
 				'Authorization' => 'DeepL-Auth-Key ' . $key,
 				'Content-Type' => 'application/x-www-form-urlencoded',
 			],
-			'body' => http_build_query([
-				'text' => $text,
-				'source_lang' => strtoupper($source),
-				'target_lang' => strtoupper($target),
-			]),
+			'body' => http_build_query($payload),
 		]);
 		if (is_wp_error($res)) {
 			return new WP_Error('pkliap_tr_deepl_network', 'DeepL réseau : ' . $res->get_error_message());
@@ -7438,6 +8079,7 @@ final class PKLIAP_Plugin {
 		set_transient('pkliap_tr_rate_limit', microtime(true), 30);
 
 		$endpoint = trim((string)($cfg['endpoint'] ?? ''));
+		$format = (string)($cfg['format'] ?? 'openai');
 		if ($endpoint === '') {
 			return new WP_Error('pkliap_tr_oc_noendpoint', 'Endpoint manquant.');
 		}
@@ -7445,9 +8087,11 @@ final class PKLIAP_Plugin {
 			return new WP_Error('pkliap_tr_model_missing', 'Modèle manquant. Enregistre un modèle compatible avec cet endpoint.');
 		}
 		// Prompt minimal — évite que le modèle reformule et recrache les instructions.
-		$sys_prompt = 'Translate the text below to language "' . $target . '". Only output the translation, nothing else.';
-
-		$format = (string)($cfg['format'] ?? 'openai');
+		$sys_prompt = (string)($cfg['system_prompt'] ?? '');
+		if ($sys_prompt === '') {
+			$sys_prompt = 'Translate the text below to language "' . $target . '". Only output the translation, nothing else.';
+		}
+		$max_out = (int)($cfg['max_output_tokens'] ?? 0);
 		if ($format === 'gemini') {
 			// system_instruction sépare le prompt du contenu utilisateur.
 			// Même si Gemini délire, le prompt ne peut pas fuiter dans la sortie.
@@ -7459,7 +8103,7 @@ final class PKLIAP_Plugin {
 					'role' => 'user',
 					'parts' => [['text' => $text]],
 				]],
-				'generationConfig' => ['temperature' => 0.2, 'maxOutputTokens' => 1024],
+				'generationConfig' => ['temperature' => 0.2, 'maxOutputTokens' => $max_out > 0 ? $max_out : 1024],
 			];
 			$headers = ['Content-Type' => 'application/json'];
 		} else {
@@ -7472,6 +8116,9 @@ final class PKLIAP_Plugin {
 				'temperature' => 0.2,
 				'stream' => false,
 			];
+			if ($max_out > 0) {
+				$body['max_tokens'] = $max_out;
+			}
 			$headers = ['Content-Type' => 'application/json'];
 			if ((string)($cfg['key'] ?? '') !== '') {
 				$headers['Authorization'] = 'Bearer ' . (string)$cfg['key'];

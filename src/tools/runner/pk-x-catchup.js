@@ -81,9 +81,9 @@ try {
 	return true;
 }
 
-async function enumerateViaNext(cfg) {
+async function enumerateViaNext(cfg, maxItems) {
 	const items = [];
-	for (let i = 0; i < 100; i++) {
+	for (let i = 0; i < maxItems; i++) {
 		let r = null;
 		for (let t = 1; t <= 3; t++) {
 			r = await wpCall(cfg, 'GET', 'x-browser/next');
@@ -137,11 +137,12 @@ try {
 	}
 
 	const betweenMs = parseInt(process.env.PK_PAUSE_MS || '20000', 10);
+	const maxItems = Math.max(1, parseInt(process.env.PK_CATCHUP_MAX || '20', 10));
 
 	if (!(await checkXSession(cfg))) process.exit(4);
 
-	log('=== CATCH-UP X — énumération via /next (texte traduit) ===');
-	const items = await enumerateViaNext(cfg);
+	log(`=== CATCH-UP X — énumération via /next (max ${maxItems}, texte traduit) ===`);
+	const items = await enumerateViaNext(cfg, maxItems);
 	if (items.length === 0) { log('Rien à rattraper.'); process.exit(0); }
 
 	log(`=== ${items.length} article(s) à publier — pause ${betweenMs}ms entre chaque (moteur ego-browser) ===`);
@@ -155,6 +156,12 @@ try {
 		if (res.ok) {
 			done.push(item.post_id);
 			log(`  #${item.post_id} PUBLIÉ (${done.length}/${items.length})`);
+			// Marquage immédiat : un arrêt du script ne laisse pas les tweets
+			// publiés sans shared_at (et évite un doublon au prochain run).
+			const mark = await wpCall(cfg, 'POST', 'x-browser/done', { post_id: item.post_id });
+			if (!mark.ok) {
+				log(`  #${item.post_id} ERREUR /done HTTP ${mark.status}`);
+			}
 			consecFail = 0;
 		} else {
 			failed.push({ id: item.post_id, reason: res.reason });
@@ -167,12 +174,6 @@ try {
 			}
 		}
 		if (betweenMs > 0) await sleep(betweenMs);
-	}
-
-	log(`=== Marquage /done pour ${done.length} article(s) publié(s) ===`);
-	for (const pid of done) {
-		const r = await wpCall(cfg, 'POST', 'x-browser/done', { post_id: pid });
-		log(`  #${pid} ${r.ok ? 'marqué publié' : `ERREUR /done HTTP ${r.status}`}`);
 	}
 
 	log(`=== BILAN: ${done.length} publié(s), ${failed.length} échec(s) ===`);

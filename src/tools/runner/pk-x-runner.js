@@ -43,7 +43,7 @@ async function wpCall(cfg, method, route, body) {
 			Accept: 'application/json',
 			'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
 		},
-		signal: AbortSignal.timeout(60000),
+		signal: AbortSignal.timeout(180000),
 	};
 	if (body !== undefined) {
 		opts.headers['Content-Type'] = 'application/json';
@@ -80,8 +80,15 @@ try {
 		while (!confirmed && Date.now() < deadline) { await wait(0.5); confirmed = await confirm() }
 		if (!confirmed) throw new Error('confirmation explicite X absente')
 		await wait(2)
+		const postUrl = await js(String.raw\`(() => {
+			const hit = [...document.querySelectorAll('a[href*="/status/"]')]
+				.map(a => a.href)
+				.find(h => /\\/status\\/\\d+/.test(h))
+			if (hit) return hit
+			return /\\/status\\/\\d+/.test(location.href) ? location.href : ''
+		})()\`)
 		await completeTaskSpace(task.id, { keep: false })
-		cliLog('RESULT ' + JSON.stringify({ ok: true }))
+		cliLog('RESULT ' + JSON.stringify({ ok: true, post_url: postUrl }))
 	}
 } catch (e) {
 	cliLog('RESULT ' + JSON.stringify({ ok: false, error: String(e && e.message || e) }))
@@ -151,7 +158,8 @@ async function releaseAndExit(cfg, postId, reason, code) {
 
 	let done;
 	try {
-		done = await wpCall(cfg, 'POST', 'x-browser/done', { post_id: postId });
+		const xPostId = String(result.post_url || '').match(/\/status\/(\d+)/)?.[1] || '';
+		done = await wpCall(cfg, 'POST', 'x-browser/done', { post_id: postId, x_post_id: xPostId });
 	} catch (e) {
 		log(`POST #${postId} ERREUR /done: ${e.message} — posté mais non marqué, vérifie WP.`);
 		process.exit(1);

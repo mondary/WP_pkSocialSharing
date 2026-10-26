@@ -19,7 +19,7 @@
 - Configuration Meta centralisée : connexion OAuth, token longue durée, détection Page Facebook et compte Instagram.
 - Publication X via API, ou fallback navigateur si les crédits API sont insuffisants.
 - Runner navigateur X : queue REST + token + plafond quotidien, automatisable via un cron `launchd` sur ta machine (zéro crédit API, fingerprint humain). Publie via **ego-browser (EgoLite)** dans un espace de navigation isolé qui hérite de ta session X, sans perturber ton navigateur principal. Voir [`src/tools/runner/`](src/tools/runner/README.md).
-- Runner navigateur Medium : importe l'URL de l'article via `medium.com/p/import`, sans dépendre de l'API Medium retirée. Mode daemon qui poll la queue toutes les 30 secondes — un clic sur **Publier maintenant** dans WordPress déclenche l'import et la publication Medium sans rien relancer. Réutilise ego-browser et la queue REST du plugin. Voir [`src/tools/runner/`](src/tools/runner/README.md).
+- Runner navigateur Medium : importe l'URL de l'article via `medium.com/p/import`, sans dépendre de l'API Medium retirée. Mode daemon qui poll la queue toutes les 30 secondes — un clic sur **Publier maintenant** dans WordPress déclenche l'import et la publication Medium sans rien relancer. Réutilise ego-browser et la queue REST du plugin. Le runner importe une page traduite (titre + corps HTML) dans la langue choisie, anglais par défaut, avec cache par article. Voir [`src/tools/runner/`](src/tools/runner/README.md).
 - Contrôleur macOS dans la menubar : clic gauche 🟢/🔴 pour activer ou arrêter tous les runners, clic droit pour les logs.
 
 ## 🧠 Utilisation
@@ -115,6 +115,7 @@ Mise à jour live :
 
 Historique complet : [CHANGELOG.md](CHANGELOG.md).
  
+- `2026.10.24` : Medium — le runner navigateur importe une page traduite (titre + corps HTML) dans la langue choisie, anglais par défaut, avec cache par article.
 - `2026.10.01` : évite les balises Open Graph/Twitter dupliquées lorsque PK SEO Head est actif.
 - `2026.09.01` : endpoint REST `POST /shares/purge-ghosts` — détecte et purge les partages enregistrés avant la publication de l'article (articles reprogrammés), nettoie les flags skip des runners X/Medium, et remet tout dans la file de retry.
 - `2026.08.09` : ajoute un lien `Dry-run (ne publie pas)` pour chaque réseau afin de vérifier la configuration et le texte généré avant toute publication réelle.
