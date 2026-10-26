@@ -1,5 +1,10 @@
 # Changelog
 
+## [2026.10.26] - 2026-10-26
+
+### Fixed
+- LinkedIn : partage ARTICLE via `/rest/posts` avec vignette uploadée. L'API ne scrape plus l'Open Graph ; sans vignette explicite la carte s'affichait sans visuel.
+
 ## [2026.10.25] - 2026-10-26
 
 ### Changed

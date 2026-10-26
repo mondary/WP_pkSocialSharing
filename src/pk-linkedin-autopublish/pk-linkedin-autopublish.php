@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.10.25
+ * Version: 2026.10.26
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -5379,13 +5379,55 @@ final class PKLIAP_Plugin {
 				];
 			}
 		} else {
-			// mode opengraph: LinkedIn fait l'unfurl de l'URL (og:image).
-			if (!empty($opt['require_image'])) {
-				// On ne peut pas forcer LinkedIn à afficher le preview, mais on peut au moins exiger une featured image côté WP.
-				if (!$thumb_id) {
-					return new WP_Error('pkliap_image_required', 'Image obligatoire : ajoute une image mise en avant (Featured image) sur cet article.');
+			// mode opengraph : carte ARTICLE moderne. Depuis la migration /rest/posts,
+			// LinkedIn ne scrape plus l'Open Graph : il faut uploader la vignette et
+			// fournir son URN, sinon la carte s'affiche sans visuel.
+			if (!empty($opt['require_image']) && !$thumb_id) {
+				return new WP_Error('pkliap_image_required', 'Image obligatoire : ajoute une image mise en avant (Featured image) sur cet article.');
+			}
+			if ($thumb_id) {
+				$image_urn_res = self::upload_featured_image($thumb_id, $opt);
+				if (is_wp_error($image_urn_res)) {
+					$msg = $image_urn_res->get_error_message();
+					self::update_options([
+						'last_assets_error' => $msg,
+						'last_assets_error_at' => time(),
+					]);
+					if (!empty($opt['require_image'])) {
+						return $image_urn_res;
+					}
+					$warn_no_image = 'Post publié sans vignette (upload LinkedIn indisponible).';
+				} elseif ($image_urn_res) {
+					$image_urn = (string)$image_urn_res;
+					self::update_options([
+						'last_assets_error' => '',
+						'last_assets_error_at' => 0,
+					]);
 				}
 			}
+
+			$res = self::linkedin_create_article_post($post_id, $text, $image_urn, $opt);
+			if (is_wp_error($res)) {
+				return $res;
+			}
+
+			$urn = '';
+			if (isset($res['headers']['x-restli-id'])) {
+				$urn = (string)$res['headers']['x-restli-id'];
+			}
+			if (!$urn && isset($res['body']['id'])) {
+				$urn = (string)$res['body']['id'];
+			}
+
+			update_post_meta($post_id, self::META_SHARED_AT, time());
+			if ($urn) {
+				update_post_meta($post_id, self::META_SHARE_URN, $urn);
+			}
+
+			return [
+				'urn' => $urn,
+				'warning' => $warn_no_image,
+			];
 		}
 
 		$payload = [
@@ -6364,6 +6406,36 @@ final class PKLIAP_Plugin {
 					'altText' => self::build_linkedin_image_alt_text($post_id),
 					'id' => $image_urn,
 				],
+			],
+			'lifecycleState' => 'PUBLISHED',
+			'isReshareDisabledByAuthor' => false,
+		];
+
+		return self::linkedin_api_post_versioned('/rest/posts', $payload, $opt['access_token'], (string)$opt['linkedin_version']);
+	}
+
+	private static function linkedin_create_article_post(int $post_id, string $text, string $image_urn, array $opt) {
+		$charset = get_bloginfo('charset');
+		$article = [
+			'source' => self::get_post_link($post_id, $opt),
+			'title' => html_entity_decode(wp_strip_all_tags(get_the_title($post_id)), ENT_QUOTES, $charset),
+			'description' => html_entity_decode(self::safe_excerpt($post_id, 200), ENT_QUOTES, $charset),
+		];
+		if ($image_urn !== '') {
+			$article['thumbnail'] = $image_urn;
+		}
+
+		$payload = [
+			'author' => $opt['author_urn'],
+			'commentary' => $text,
+			'visibility' => $opt['visibility'],
+			'distribution' => [
+				'feedDistribution' => 'MAIN_FEED',
+				'targetEntities' => [],
+				'thirdPartyDistributionChannels' => [],
+			],
+			'content' => [
+				'article' => $article,
 			],
 			'lifecycleState' => 'PUBLISHED',
 			'isReshareDisabledByAuthor' => false,
