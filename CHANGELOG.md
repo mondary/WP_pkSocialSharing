@@ -1,5 +1,11 @@
 # Changelog
 
+## [2026.10.25] - 2026-10-26
+
+### Changed
+- LinkedIn : lien en fin de post, texte complet (limite 2900, extrait 1200, coupe aux frontières de phrase) et carte Open Graph cliquable.
+- Dry-run : aperçu complet du texte généré (1200 caractères).
+
 ## [2026.10.24] - 2026-10-26
 
 ### Added

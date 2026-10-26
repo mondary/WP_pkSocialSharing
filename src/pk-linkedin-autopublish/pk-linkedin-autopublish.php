@@ -5,7 +5,7 @@ if (function_exists('opcache_invalidate')) {
 /**
  * Plugin Name: PK SocialSharing
  * Description: Publie automatiquement vos nouveaux articles sur LinkedIn, X, Facebook, Instagram, Threads et Medium.
- * Version: 2026.10.24
+ * Version: 2026.10.25
  * Author: cmondary
  * Author URI: https://github.com/mondary
  * License: GPLv2 or later
@@ -4519,7 +4519,7 @@ final class PKLIAP_Plugin {
 		if (trim($text) === '') {
 			return ['ok' => false, 'message' => 'Dry-run ' . strtoupper($network) . ' échoué : le texte généré est vide. Rien n’a été publié.'];
 		}
-		return ['ok' => true, 'message' => 'Dry-run ' . strtoupper($network) . ' OK : configuration présente, texte généré, aucune publication effectuée. Aperçu : ' . self::mb_truncate($text, 240)];
+		return ['ok' => true, 'message' => 'Dry-run ' . strtoupper($network) . ' OK : configuration présente, texte généré, aucune publication effectuée. Aperçu : ' . self::mb_truncate($text, 1200)];
 	}
 
 	public static function handle_gemini_models(): void {
@@ -6122,7 +6122,10 @@ final class PKLIAP_Plugin {
 	}
 
 	private static function build_linkedin_text(int $post_id, array $opt, string $link): string {
-		return self::build_network_text($post_id, $opt, $link, '', 620, 150, (string)($opt['linkedin_share_lang'] ?? ''));
+		// LinkedIn accepte ~3000 caractères. On laisse de la marge pour l'URL et
+		// les sauts de ligne, et on ne coupe plus l'extrait à 150 caractères :
+		// l'utilisateur voyait une césure au milieu d'une phrase.
+		return self::build_network_text($post_id, $opt, $link, '', 2900, 1200, (string)($opt['linkedin_share_lang'] ?? ''));
 	}
 
 	private static function build_x_text(int $post_id, array $opt, string $link): string {
@@ -6309,16 +6312,33 @@ final class PKLIAP_Plugin {
 		if ($max <= 0) {
 			return '';
 		}
-		if (function_exists('mb_strlen') && function_exists('mb_substr')) {
-			if (mb_strlen($s) <= $max) {
-				return $s;
-			}
-			return rtrim(mb_substr($s, 0, max(0, $max - 1))) . '…';
-		}
-		if (strlen($s) <= $max) {
+		$len = self::mb_length($s);
+		if ($len <= $max) {
 			return $s;
 		}
-		return rtrim(substr($s, 0, max(0, $max - 1))) . '…';
+		$slice = function_exists('mb_substr') ? mb_substr($s, 0, max(0, $max - 1)) : substr($s, 0, max(0, $max - 1));
+		$min = (int)floor(strlen($slice) * 0.6);
+
+		// Coupe à la dernière fin de phrase si elle est suffisamment loin.
+		if (preg_match_all('/[.!?…](?=\s|$)/u', $slice, $m, PREG_OFFSET_CAPTURE) && !empty($m[0])) {
+			$last = end($m[0]);
+			if ($last[1] >= $min) {
+				return rtrim(substr($slice, 0, $last[1] + strlen($last[0])));
+			}
+		}
+		// Sinon au dernier espace, pour ne jamais couper un mot.
+		$space = strrpos($slice, ' ');
+		if ($space !== false && $space >= $min) {
+			$slice = substr($slice, 0, $space);
+		}
+		$slice = rtrim($slice, " \t\n\r,;:-");
+		if ($slice === '') {
+			$slice = function_exists('mb_substr') ? mb_substr($s, 0, max(0, $max - 1)) : substr($s, 0, max(0, $max - 1));
+		}
+		if (!preg_match('/[.!?…]$/u', $slice)) {
+			$slice .= '…';
+		}
+		return $slice;
 	}
 
 	private static function mb_length(string $s): int {

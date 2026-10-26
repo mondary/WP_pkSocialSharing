@@ -115,6 +115,7 @@ Mise à jour live :
 
 Historique complet : [CHANGELOG.md](CHANGELOG.md).
  
+- `2026.10.25` : LinkedIn — lien en fin de post, texte complet et carte Open Graph cliquable.
 - `2026.10.24` : Medium — le runner navigateur importe une page traduite (titre + corps HTML) dans la langue choisie, anglais par défaut, avec cache par article.
 - `2026.10.01` : évite les balises Open Graph/Twitter dupliquées lorsque PK SEO Head est actif.
 - `2026.09.01` : endpoint REST `POST /shares/purge-ghosts` — détecte et purge les partages enregistrés avant la publication de l'article (articles reprogrammés), nettoie les flags skip des runners X/Medium, et remet tout dans la file de retry.

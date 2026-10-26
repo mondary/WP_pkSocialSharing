@@ -114,6 +114,7 @@ Live update:
 
 Full history: [CHANGELOG.md](CHANGELOG.md).
 
+- `2026.10.25`: LinkedIn — link moved to the end, full post text and clickable Open Graph card.
 - `2026.10.24`: Medium — the browser runner imports a translated page (title + HTML body) in the selected language, English by default, cached per article.
 - `2026.10.01`: avoids duplicate Open Graph/Twitter tags when PK SEO Head is active.
 - `2026.09.01`: REST endpoint `POST /shares/purge-ghosts` — detects and purges shares recorded before the article's publication date (rescheduled posts), clears X/Medium runner skip flags, and puts everything back into the retry queue.
